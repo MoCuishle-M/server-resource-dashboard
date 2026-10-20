@@ -46,6 +46,10 @@ import {
 } from "lucide-react";
 import {
   activeBookings,
+  approvalConflicts,
+  currentResourceUsage,
+  groupUsage,
+  resourceSharingMode,
   chinaDate,
   emptyState,
   mutate,
@@ -435,12 +439,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   }
   function exportResources() {
     downloadCSV("服务器资源.csv", [
-      ["名称", "类型", "IP", "使用方式", "位置", "备注"],
+      ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注"],
       ...filtered.map((r) => [
         r.name,
         r.type,
         r.ip,
         r.accessMode === "bare" ? "裸机" : "灵枢平台",
+        resourceSharingMode(r) === "shared" ? "共享" : "独占",
         r.location,
         r.note,
       ]),
@@ -466,38 +471,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const groupStats =
     s?.groups.map((g) => ({
       group: g,
-      count: current.filter((b) => b.groupId === g.id).length,
+      ...groupUsage(s, g.id, clock),
       future: s.bookings.filter(
         (b) =>
           b.status === "scheduled" && b.groupId === g.id && b.startAt > clock,
       ).length,
-      hours: s.bookings
-        .filter(
-          (b) =>
-            ["scheduled", "released"].includes(b.status) &&
-            b.groupId === g.id &&
-            b.startAt < clock,
-        )
-        .reduce(
-          (sum, b) =>
-            sum +
-            Math.max(
-              0,
-              (Math.min(Date.parse(b.endAt), Date.parse(clock)) -
-                Date.parse(b.startAt)) /
-                3600000,
-            ),
-          0,
-        ),
     })) ?? [];
-  const conflicts = review
-    ? (s?.bookings.filter(
-        (b) =>
-          b.status === "scheduled" &&
-          review.resourceIds.includes(b.resourceId) &&
-          overlaps(b, review),
-      ) ?? [])
-    : [];
+  const conflicts = review && s ? approvalConflicts(s, review) : [];
   const showResourceTable = (limit?: number) => (
     <div className="table-scroll">
       <table className="resource-table">
@@ -523,6 +503,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             <th>服务器 / IP</th>
             <th>资源类型</th>
             <th>使用方式</th>
+            <th>占用模式</th>
             <th>当前状态</th>
             <th>使用团队 / 用途</th>
             <th>释放时间</th>
@@ -531,7 +512,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         </thead>
         <tbody>
           {filtered.slice(0, limit).map((r) => {
-            const b = current.find((b) => b.resourceId === r.id);
+            const usage = currentResourceUsage(s!, r.id, clock);
+            const b = usage.bookings[0];
             return (
               <tr key={r.id}>
                 {admin && view === "resources" && (
@@ -576,6 +558,15 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 <td>
                   <Badge
                     tone={
+                      resourceSharingMode(r) === "shared" ? "blue" : "neutral"
+                    }
+                  >
+                    {resourceSharingMode(r) === "shared" ? "共享" : "独占"}
+                  </Badge>
+                </td>
+                <td>
+                  <Badge
+                    tone={
                       r.status === "maintenance"
                         ? "neutral"
                         : b
@@ -594,17 +585,33 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 <td>
                   {b ? (
                     <>
-                      <span className="group-label">
+                      <span
+                        className="group-label"
+                        title={usage.groupIds.map(groupName).join("、")}
+                      >
                         <span
                           className={`dot group-${Number(b.groupId.replace("g", "")) % 5}`}
                         />
-                        {groupName(b.groupId)}
-                        {b.priority !== "normal" && (
-                          <Zap size={13} className="orange-text" />
-                        )}
+                        {usage.groupIds.map(groupName).join("、")}
+                        {usage.bookings.some(
+                          (item) => item.priority !== "normal",
+                        ) && <Zap size={13} className="orange-text" />}
                       </span>
-                      <small className="task-ellipsis" title={b.purpose}>
-                        {b.purpose}
+                      <small
+                        className="task-ellipsis"
+                        title={usage.bookings
+                          .map(
+                            (item) =>
+                              `${groupName(item.groupId)}：${item.purpose}`,
+                          )
+                          .join("；")}
+                      >
+                        {usage.bookings
+                          .map(
+                            (item) =>
+                              `${groupName(item.groupId)}：${item.purpose}`,
+                          )
+                          .join("；")}
                       </small>
                     </>
                   ) : (
@@ -614,8 +621,12 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 <td>
                   {b ? (
                     <>
-                      <span className="mono">{fmt(b.endAt)}</span>
-                      <small>北京时间</small>
+                      <span className="mono">{fmt(usage.releaseAt!)}</span>
+                      <small>
+                        {usage.groupIds.length > 1
+                          ? "当前占用全部结束 · 北京时间"
+                          : "北京时间"}
+                      </small>
                     </>
                   ) : (
                     <span className="muted">—</span>
@@ -1430,7 +1441,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     <div className="section-heading">
                       <div>
                         <h2>资源使用申请</h2>
-                        <p>申请需经管理员批准后生效，高优任务不会自动抢占。</p>
+                        <p>
+                          申请需经管理员批准后生效；共享服务器允许多个组同时使用。
+                        </p>
                       </div>
                       <button
                         className="button primary"
@@ -2019,6 +2032,17 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   <option value="lingshu">通过灵枢平台使用</option>
                 </select>
               </Field>
+              <Field label="占用模式 *">
+                <select
+                  name="sharingMode"
+                  defaultValue={resourceSharingMode(editResource ?? undefined)}
+                >
+                  <option value="exclusive">
+                    独占 · 同一时间只批准一个预约
+                  </option>
+                  <option value="shared">共享 · 允许多个组同时使用</option>
+                </select>
+              </Field>
               <Field label="机房 / 位置">
                 <input
                   name="location"
@@ -2092,12 +2116,21 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               className="button"
               onClick={() =>
                 downloadCSV("服务器导入模板.csv", [
-                  ["名称", "类型", "IP", "使用方式", "位置", "备注"],
+                  [
+                    "名称",
+                    "类型",
+                    "IP",
+                    "使用方式",
+                    "占用模式",
+                    "位置",
+                    "备注",
+                  ],
                   [
                     "Atlas-示例-01",
                     "Ascend 910B · 8卡",
                     "192.0.2.10",
                     "裸机",
+                    "独占",
                     "机房A",
                     "请替换示例内容",
                   ],
@@ -2126,7 +2159,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 }}
               />
             </label>
-            <span className="muted text-small">使用方式：裸机 / 灵枢平台</span>
+            <span className="muted text-small">
+              使用方式：裸机 / 灵枢平台；占用模式：独占 / 共享（可选，默认独占）
+            </span>
           </div>
           <textarea
             className="bulk-text"
@@ -2160,6 +2195,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       <th>类型</th>
                       <th>IP</th>
                       <th>使用方式</th>
+                      <th>占用模式</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2173,6 +2209,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <td>{r.type}</td>
                         <td className="mono">{r.ip}</td>
                         <td>{r.accessMode === "bare" ? "裸机" : "灵枢平台"}</td>
+                        <td>{r.sharingMode === "shared" ? "共享" : "独占"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2318,7 +2355,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                             <strong>{r.name}</strong>
                             <small>
                               {r.type} ·{" "}
-                              {r.accessMode === "bare" ? "裸机" : "灵枢平台"}
+                              {r.accessMode === "bare" ? "裸机" : "灵枢平台"} ·{" "}
+                              {resourceSharingMode(r) === "shared"
+                                ? "共享"
+                                : "独占"}
                             </small>
                           </span>
                           <Badge tone={used.has(r.id) ? "orange" : "green"}>
@@ -2332,7 +2372,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 </div>
                 <span className="text-small muted">
                   已选 {requestResources.length} 台 ·
-                  当前使用中不代表未来时段不可预约。
+                  共享资源可同时申请；独占资源审批时检查时间冲突。
                 </span>
               </div>
               <div className="request-fields">
@@ -2432,7 +2472,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               </div>
             </div>
             <div className="modal-footer">
-              <span className="muted text-small">冲突会在审批时再次检查。</span>
+              <span className="muted text-small">
+                共享服务器可并行使用；独占服务器审批时检查冲突。
+              </span>
               <span className="spacer" />
               <button
                 type="button"
@@ -2480,7 +2522,14 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             </p>
             <div className="chips">
               {review.resourceIds.map((id) => (
-                <span key={id}>{resourceName(id)}</span>
+                <span key={id}>
+                  {resourceName(id)} ·{" "}
+                  {resourceSharingMode(
+                    s?.resources.find((r) => r.id === id),
+                  ) === "shared"
+                    ? "共享"
+                    : "独占"}
+                </span>
               ))}
             </div>
             {review.reviewer && (
@@ -2873,7 +2922,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         <Modal
           wide
           title={detail.name}
-          sub={`${detail.type} · ${detail.accessMode === "bare" ? "通过裸机使用" : "通过灵枢平台使用"} · ${detail.location || "未填写位置"}`}
+          sub={`${detail.type} · ${detail.accessMode === "bare" ? "通过裸机使用" : "通过灵枢平台使用"} · ${resourceSharingMode(detail) === "shared" ? "共享" : "独占"} · ${detail.location || "未填写位置"}`}
           onClose={() => setDetail(null)}
         >
           <div className="detail-top">

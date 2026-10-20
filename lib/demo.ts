@@ -51,6 +51,7 @@ export function demoState(): PublicState {
       type: i < 10 ? "Ascend 910B · 8卡" : "Ascend 950 · 8卡",
       ip: `192.0.2.${i + 11}`,
       accessMode: i % 3 ? "bare" : "lingshu",
+      sharingMode: i === 0 ? "shared" : "exclusive",
       location: `北京 · ${i < 8 ? "A01" : "A02"}机柜`,
       note: "示例服务器，仅用于演示",
       status: i === 15 ? "maintenance" : "available",
@@ -106,6 +107,20 @@ export function demoState(): PublicState {
           updatedAt: at,
         });
   }
+  // Two teams share one 8-card server; no per-card allocation is recorded.
+  s.requests.push({
+    ...s.requests[1],
+    id: "shared-demo",
+    resourceIds: ["r1"],
+    purpose: "共享服务器 · 算法联调",
+  });
+  s.bookings.push({
+    ...s.bookings[0],
+    id: "shared-demo-booking",
+    requestId: "shared-demo",
+    groupId: "g2",
+    purpose: "共享服务器 · 算法联调",
+  });
   const past = timeRange(chinaDate(new Date(now.getTime() - 86400000)), 0);
   s.bookings.push({
     id: "history-1",

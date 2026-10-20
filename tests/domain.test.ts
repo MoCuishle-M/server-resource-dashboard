@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   activeBookings,
+  approvalConflicts,
+  currentResourceUsage,
+  groupUsage,
   emptyState,
   mutate,
   overlaps,
@@ -384,4 +387,190 @@ test("table import handles Excel TSV, CSV quoted comma/newline, BOM and rejects 
     /使用方式/,
   );
   assert.equal(csvCell("=SUM(A1)"), '"\'=SUM(A1)"');
+});
+
+test("shared server approves overlapping groups and aggregates current occupancy without card allocation", () => {
+  let s = setup();
+  const id = s.resources[0].id;
+  s = apply(s, {
+    type: "resource.save",
+    id,
+    resource: { ...row, sharingMode: "shared" },
+  });
+  s = approve(request(s));
+  s = request(
+    s,
+    "2026-10-20T02:00:00.000Z",
+    "2026-10-20T12:00:00.000Z",
+    "normal",
+    { ...contact, userId: "c2", groupId: "g2" },
+  );
+  assert.equal(approvalConflicts(s, s.requests.at(-1)!).length, 0);
+  s = approve(s);
+  const at = "2026-10-20T05:00:00.000Z";
+  assert.equal(s.bookings.filter((b) => b.status === "scheduled").length, 2);
+  assert.deepEqual(currentResourceUsage(s, id, at).groupIds, ["g1", "g2"]);
+  assert.equal(
+    currentResourceUsage(s, id, at).releaseAt,
+    "2026-10-20T12:00:00.000Z",
+  );
+  assert.equal(groupUsage(s, "g1", at).count, 1);
+  assert.equal(groupUsage(s, "g2", at).count, 1);
+  assert.equal(new Set(activeBookings(s, at).map((b) => b.resourceId)).size, 1);
+  assert(!("cardCount" in s.bookings[0]));
+});
+test("same group sharing one server is counted once and elapsed hours use the union", () => {
+  let s = setup();
+  s = apply(s, {
+    type: "resource.save",
+    id: s.resources[0].id,
+    resource: { ...row, sharingMode: "shared" },
+  });
+  s = approve(request(s));
+  s = approve(
+    request(s, "2026-10-20T02:00:00.000Z", "2026-10-20T07:00:00.000Z"),
+  );
+  const at = "2026-10-20T05:00:00.000Z";
+  assert.deepEqual(groupUsage(s, "g1", at), { count: 1, hours: 4 });
+  assert.deepEqual(currentResourceUsage(s, s.resources[0].id, at).groupIds, [
+    "g1",
+  ]);
+});
+test("switching shared back to exclusive blocks overlapping reservations and preserves history", () => {
+  let s = setup();
+  const id = s.resources[0].id;
+  s = apply(s, {
+    type: "resource.save",
+    id,
+    resource: { ...row, sharingMode: "shared" },
+  });
+  s = approve(request(s));
+  s = approve(
+    request(
+      s,
+      "2026-10-20T02:00:00.000Z",
+      "2026-10-20T07:00:00.000Z",
+      "normal",
+      { ...contact, groupId: "g2" },
+    ),
+  );
+  assert.throws(
+    () =>
+      apply(s, {
+        type: "resource.save",
+        id,
+        resource: { ...row, sharingMode: "exclusive" },
+      }),
+    /重叠的共享预约/,
+  );
+  s = apply(s, { type: "request.cancel", id: s.requests.at(-1)!.id });
+  s = apply(s, {
+    type: "resource.save",
+    id,
+    resource: { ...row, sharingMode: "exclusive" },
+  });
+  assert.equal(s.resources[0].sharingMode, "exclusive");
+  const event = s.audits.at(-1)!;
+  assert.equal(JSON.parse(event.before).sharingMode, "shared");
+  assert.equal(JSON.parse(event.after).sharingMode, "exclusive");
+  s = request(s);
+  assert.throws(() => approve(s), /冲突/);
+});
+test("higher priority on shared resources never preempts existing users; mixed approvals only preempt exclusive resources", () => {
+  let s = setup();
+  const sharedId = s.resources[0].id;
+  s = apply(s, {
+    type: "resource.save",
+    id: sharedId,
+    resource: { ...row, sharingMode: "shared" },
+  });
+  s = approve(request(s));
+  const existing = s.bookings[0].id;
+  s = approve(
+    request(s, undefined, undefined, "urgent", { ...contact, groupId: "g2" }),
+  );
+  assert.equal(s.bookings.find((b) => b.id === existing)!.status, "scheduled");
+  s = apply(s, {
+    type: "resource.save",
+    resource: { ...row, name: "exclusive-2", ip: "192.0.2.2" },
+  });
+  const exclusiveId = s.resources[1].id;
+  s = apply(s, {
+    type: "request.create",
+    groupId: "g1",
+    resourceIds: [exclusiveId],
+    startAt: "2026-10-20T01:00:00.000Z",
+    endAt: "2026-10-20T10:00:00.000Z",
+    purpose: "独占普通任务",
+    priority: "normal",
+  });
+  s = approve(s);
+  s = apply(s, {
+    type: "request.create",
+    groupId: "g3",
+    resourceIds: [sharedId, exclusiveId],
+    startAt: "2026-10-20T03:00:00.000Z",
+    endAt: "2026-10-20T06:00:00.000Z",
+    purpose: "混合高优任务",
+    priority: "high",
+  });
+  assert.deepEqual(
+    approvalConflicts(s, s.requests.at(-1)!).map((b) => b.resourceId),
+    [exclusiveId],
+  );
+  s = apply(s, {
+    type: "request.review",
+    id: s.requests.at(-1)!.id,
+    approve: true,
+    preempt: true,
+    note: "独占资源用于高优实验",
+  });
+  assert(
+    s.bookings
+      .filter((b) => b.resourceId === sharedId)
+      .every((b) => b.status === "scheduled"),
+  );
+  assert(
+    s.bookings.some(
+      (b) => b.resourceId === exclusiveId && b.status === "preempted",
+    ),
+  );
+});
+test("sharing configuration is validated and table imports default to exclusive", () => {
+  assert.equal(setup().resources[0].sharingMode, "exclusive");
+  assert.throws(
+    () =>
+      apply(emptyState(), {
+        type: "resource.save",
+        resource: { ...row, sharingMode: "invalid" },
+      }),
+    /占用模式/,
+  );
+  const rows = importRows(
+    "名称,类型,IP,使用方式,占用模式\nshared,t,192.0.2.1,裸机,共享\nexclusive,t,192.0.2.2,灵枢平台,独占",
+  );
+  assert.deepEqual(
+    rows.map((r) => r.sharingMode),
+    ["shared", "exclusive"],
+  );
+  assert.equal(
+    importRows("名称,类型,IP,使用方式\nlegacy,t,192.0.2.3,裸机")[0].sharingMode,
+    "exclusive",
+  );
+  assert.throws(
+    () =>
+      importRows(
+        "名称,类型,IP,使用方式,占用模式\nwrong,t,192.0.2.3,裸机,whatever",
+      ),
+    /占用模式/,
+  );
+  let s = apply(emptyState(), { type: "resource.import", rows });
+  assert.equal(s.resources[0].sharingMode, "shared");
+  // An older client omitting the field cannot reset an existing shared server.
+  s = apply(s, {
+    type: "resource.save",
+    id: s.resources[0].id,
+    resource: { ...row, name: "shared-renamed" },
+  });
+  assert.equal(s.resources[0].sharingMode, "shared");
 });

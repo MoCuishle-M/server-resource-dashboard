@@ -2331,3 +2331,9 @@ th {
     scroll-behavior: auto !important;
   }
 }
+/* Shared resources list every current team, without allocating cards. */
+.group-label {
+  max-width: 280px;
+  white-space: normal;
+  line-height: 1.6;
+}

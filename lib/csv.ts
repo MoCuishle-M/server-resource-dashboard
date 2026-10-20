@@ -36,6 +36,7 @@ export function importRows(input: string) {
     type: ["类型", "服务器类型", "type"],
     ip: ["ip", "IP", "IP地址"],
     accessMode: ["使用方式", "accessMode", "使用模式"],
+    sharingMode: ["占用模式", "共享模式", "sharingMode"],
     location: ["位置", "机房", "location"],
     note: ["备注", "note"],
   };
@@ -55,7 +56,13 @@ export function importRows(input: string) {
     else if (["灵枢", "灵枢平台", "lingshu", "通过灵枢平台使用"].includes(mode))
       mode = "lingshu";
     else throw new Error(`第${i + 2}行：使用方式应为“裸机”或“灵枢平台”`);
+    const sharing = get("sharingMode");
+    let sharingMode = "exclusive";
+    if (["共享", "shared"].includes(sharing)) sharingMode = "shared";
+    else if (!["", "独占", "exclusive"].includes(sharing))
+      throw new Error(`第${i + 2}行：占用模式应为“独占”或“共享”`);
     return {
+      sharingMode,
       name: get("name"),
       type: get("type"),
       ip: get("ip"),

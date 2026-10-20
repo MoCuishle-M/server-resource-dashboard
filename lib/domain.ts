@@ -55,6 +55,73 @@ export function activeBookings(s: State, now: string) {
     (b) => b.status === "scheduled" && b.startAt <= now && b.endAt > now,
   );
 }
+export function resourceSharingMode(resource?: Pick<Resource, "sharingMode">) {
+  return resource?.sharingMode ?? "exclusive";
+}
+export function approvalConflicts(s: State, request: UsageRequest) {
+  return s.bookings.filter(
+    (b) =>
+      b.status === "scheduled" &&
+      request.resourceIds.includes(b.resourceId) &&
+      resourceSharingMode(s.resources.find((r) => r.id === b.resourceId)) ===
+        "exclusive" &&
+      overlaps(b, request),
+  );
+}
+export function currentResourceUsage(
+  s: State,
+  resourceId: string,
+  now: string,
+) {
+  const bookings = activeBookings(s, now).filter(
+    (b) => b.resourceId === resourceId,
+  );
+  return {
+    bookings,
+    groupIds: [...new Set(bookings.map((b) => b.groupId))],
+    releaseAt: bookings
+      .map((b) => b.endAt)
+      .sort()
+      .at(-1),
+  };
+}
+export function groupUsage(s: State, groupId: string, now: string) {
+  const count = new Set(
+    activeBookings(s, now)
+      .filter((b) => b.groupId === groupId)
+      .map((b) => b.resourceId),
+  ).size;
+  const byResource = new Map<string, { start: number; end: number }[]>();
+  for (const b of s.bookings) {
+    if (
+      b.groupId !== groupId ||
+      !["scheduled", "released"].includes(b.status) ||
+      b.startAt >= now
+    )
+      continue;
+    const ranges = byResource.get(b.resourceId) ?? [];
+    ranges.push({
+      start: Date.parse(b.startAt),
+      end: Math.min(Date.parse(b.endAt), Date.parse(now)),
+    });
+    byResource.set(b.resourceId, ranges);
+  }
+  let elapsed = 0;
+  for (const ranges of byResource.values()) {
+    ranges.sort((a, b) => a.start - b.start);
+    let start = 0,
+      end = 0;
+    for (const r of ranges) {
+      if (r.start > end) {
+        elapsed += end - start;
+        start = r.start;
+        end = r.end;
+      } else end = Math.max(end, r.end);
+    }
+    elapsed += end - start;
+  }
+  return { count, hours: elapsed / 3600000 };
+}
 export function timeRange(date: string, slot: number) {
   const s = slots[slot];
   const startAt = new Date(`${date}T${s.start}:00+08:00`).toISOString();
@@ -148,12 +215,19 @@ export function mutate(
       fail("请选择裸机或灵枢平台");
     if (!["available", "maintenance"].includes(v.status as string))
       fail("资源状态不正确");
+    const sharingMode =
+      v.sharingMode === undefined
+        ? resourceSharingMode(previous)
+        : v.sharingMode;
+    if (!["exclusive", "shared"].includes(sharingMode as string))
+      fail("占用模式应为独占或共享");
     return {
       id: previous?.id ?? crypto.randomUUID(),
       name: text(v.name, "服务器名称", 80),
       type: text(v.type, "服务器类型", 80),
       ip,
       accessMode: v.accessMode as Resource["accessMode"],
+      sharingMode: sharingMode as Resource["sharingMode"],
       status: v.status as Resource["status"],
       location: text(v.location ?? "", "位置", 100, false),
       note: text(v.note ?? "", "备注", 1000, false),
@@ -177,6 +251,30 @@ export function mutate(
         : undefined;
       if (action.id && !existing) fail("服务器不存在", 404);
       const r = resourceInput(action.resource, existing);
+      if (
+        existing &&
+        resourceSharingMode(existing) === "shared" &&
+        r.sharingMode === "exclusive"
+      ) {
+        const future = s.bookings
+          .filter(
+            (b) =>
+              b.resourceId === r.id &&
+              b.status === "scheduled" &&
+              b.endAt > now,
+          )
+          .sort((a, b) => a.startAt.localeCompare(b.startAt));
+        if (
+          future.some(
+            (b, i) =>
+              i > 0 && future.slice(0, i).some((other) => overlaps(other, b)),
+          )
+        )
+          fail(
+            "该服务器还有重叠的共享预约，请先取消或释放冲突预约再改为独占",
+            409,
+          );
+      }
       if (
         existing &&
         r.status === "maintenance" &&
@@ -417,12 +515,7 @@ export function mutate(
           if (!resource || resource.status !== "available")
             fail("服务器已删除或维护中", 409);
         }
-        const conflicts = s.bookings.filter(
-          (b) =>
-            b.status === "scheduled" &&
-            r.resourceIds.includes(b.resourceId) &&
-            overlaps(b, r),
-        );
+        const conflicts = approvalConflicts(s, r);
         if (conflicts.length) {
           if (action.preempt !== true)
             fail(

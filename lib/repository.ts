@@ -21,6 +21,10 @@ export async function loadState(db: D1Database): Promise<State> {
     if (rows.length || t !== "groups")
       (s[t] as unknown[]) = rows.map((r) => JSON.parse(r.payload));
   });
+  s.resources = s.resources.map((r) => ({
+    ...r,
+    sharingMode: r.sharingMode ?? "exclusive",
+  }));
   s.audits.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
   return s;
 }

@@ -139,3 +139,91 @@ test("real D1 persistence, atomic rollback and concurrent writers", async () => 
     await mf.dispose();
   }
 });
+
+test("legacy resource payloads default to exclusive; shared bookings persist for multiple groups", async () => {
+  const mf = new Miniflare({
+    modules: true,
+    script: 'export default {fetch(){return new Response("ok")}}',
+    compatibilityDate: "2026-05-15",
+    d1Databases: ["DB"],
+  });
+  try {
+    const db = (await mf.getD1Database("DB")) as unknown as D1Database;
+    const sql = await readFile(
+      "drizzle/0000_rainy_serpent_society.sql",
+      "utf8",
+    );
+    await db.batch(
+      sql
+        .split("--> statement-breakpoint")
+        .filter((x) => x.trim())
+        .map((x) => db.prepare(x)),
+    );
+    await db
+      .prepare("INSERT INTO resources(id,payload) VALUES(?,?)")
+      .bind(
+        "legacy",
+        JSON.stringify({
+          ...resource,
+          id: "legacy",
+          deleted: false,
+          createdAt: now,
+          updatedAt: now,
+        }),
+      )
+      .run();
+    let s = await loadState(db);
+    assert.equal(s.resources[0].sharingMode, "exclusive");
+    let next = mutate(
+      s,
+      admin,
+      {
+        type: "resource.save",
+        id: "legacy",
+        resource: { ...resource, sharingMode: "shared" },
+      },
+      now,
+    );
+    await saveState(db, s, next);
+    s = await loadState(db);
+    for (const groupId of ["g1", "g2"]) {
+      next = mutate(
+        s,
+        admin,
+        {
+          type: "request.create",
+          groupId,
+          resourceIds: ["legacy"],
+          startAt: "2026-10-20T01:00:00.000Z",
+          endAt: "2026-10-20T04:00:00.000Z",
+          purpose: groupId + "共享测试",
+          priority: "normal",
+        },
+        now,
+      );
+      await saveState(db, s, next);
+      s = await loadState(db);
+      next = mutate(
+        s,
+        admin,
+        {
+          type: "request.review",
+          id: s.requests.at(-1)!.id,
+          approve: true,
+          note: "",
+        },
+        now,
+      );
+      await saveState(db, s, next);
+      s = await loadState(db);
+    }
+    assert.equal(s.bookings.filter((b) => b.status === "scheduled").length, 2);
+    assert.equal(s.resources[0].sharingMode, "shared");
+    assert.deepEqual(
+      s.bookings.map((b) => b.groupId),
+      ["g1", "g2"],
+    );
+  } finally {
+    await mf.dispose();
+  }
+});

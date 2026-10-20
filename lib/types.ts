@@ -1,10 +1,12 @@
 export type Priority = "normal" | "high" | "urgent";
+export type SharingMode = "exclusive" | "shared";
 export type Resource = {
   id: string;
   name: string;
   type: string;
   ip: string;
   accessMode: "bare" | "lingshu";
+  sharingMode: SharingMode;
   location: string;
   note: string;
   status: "available" | "maintenance";
