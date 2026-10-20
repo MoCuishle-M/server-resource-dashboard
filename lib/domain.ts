@@ -236,6 +236,90 @@ export function mutate(
       updatedAt: now,
     };
   }
+  function validateResourceChange(previous: Resource, r: Resource) {
+    if (
+      resourceSharingMode(previous) === "shared" &&
+      r.sharingMode === "exclusive"
+    ) {
+      const future = s.bookings
+        .filter(
+          (b) =>
+            b.resourceId === r.id && b.status === "scheduled" && b.endAt > now,
+        )
+        .sort((a, b) => a.startAt.localeCompare(b.startAt));
+      if (
+        future.some(
+          (b, i) =>
+            i > 0 && future.slice(0, i).some((other) => overlaps(other, b)),
+        )
+      )
+        fail(
+          "该服务器还有重叠的共享预约，请先取消或释放冲突预约再改为独占",
+          409,
+        );
+    }
+    if (
+      r.status === "maintenance" &&
+      s.bookings.some(
+        (b) =>
+          b.resourceId === r.id && b.status === "scheduled" && b.endAt > now,
+      )
+    )
+      fail("该服务器还有有效预约，请先取消或释放预约再维护", 409);
+  }
+  const editableFields = [
+    "name",
+    "type",
+    "accessMode",
+    "sharingMode",
+    "location",
+    "note",
+    "status",
+  ];
+  function checkedChanges(value: unknown) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      fail("批量修改字段格式不正确");
+    const changes = value as Record<string, unknown>;
+    if (!Object.keys(changes).length) fail("至少选择一个要修改的字段");
+    if (Object.keys(changes).some((key) => !editableFields.includes(key)))
+      fail("批量修改不允许修改IP或其他系统字段");
+    return changes;
+  }
+  function saveBulkRows(
+    rows: { previous: Resource; changes: Record<string, unknown> }[],
+    templateNames = false,
+  ) {
+    const updated = rows.map(({ previous, changes }, index) => {
+      const values = { ...changes };
+      if (templateNames && typeof values.name === "string")
+        values.name = values.name.replace(/\{(name|ip|index)\}/g, (_, key) =>
+          key === "name"
+            ? previous.name
+            : key === "ip"
+              ? previous.ip
+              : String(index + 1),
+        );
+      const resource = resourceInput(
+        { ...previous, ...values, ip: previous.ip },
+        previous,
+      );
+      validateResourceChange(previous, resource);
+      return { previous, resource };
+    });
+    for (const { previous, resource } of updated)
+      s.resources[s.resources.findIndex((r) => r.id === previous.id)] =
+        resource;
+    validateUniqueResources();
+    for (const { previous, resource } of updated)
+      audit(
+        "批量修改服务器",
+        "resource",
+        resource.id,
+        `批量修改 ${resource.name}（${resource.ip}）`,
+        previous,
+        resource,
+      );
+  }
   function validateUniqueResources() {
     const live = s.resources.filter((r) => !r.deleted);
     if (new Set(live.map((r) => r.ip.toLowerCase())).size !== live.length)
@@ -251,39 +335,7 @@ export function mutate(
         : undefined;
       if (action.id && !existing) fail("服务器不存在", 404);
       const r = resourceInput(action.resource, existing);
-      if (
-        existing &&
-        resourceSharingMode(existing) === "shared" &&
-        r.sharingMode === "exclusive"
-      ) {
-        const future = s.bookings
-          .filter(
-            (b) =>
-              b.resourceId === r.id &&
-              b.status === "scheduled" &&
-              b.endAt > now,
-          )
-          .sort((a, b) => a.startAt.localeCompare(b.startAt));
-        if (
-          future.some(
-            (b, i) =>
-              i > 0 && future.slice(0, i).some((other) => overlaps(other, b)),
-          )
-        )
-          fail(
-            "该服务器还有重叠的共享预约，请先取消或释放冲突预约再改为独占",
-            409,
-          );
-      }
-      if (
-        existing &&
-        r.status === "maintenance" &&
-        s.bookings.some(
-          (b) =>
-            b.resourceId === r.id && b.status === "scheduled" && b.endAt > now,
-        )
-      )
-        fail("该服务器还有有效预约，请先取消或释放预约再维护", 409);
+      if (existing) validateResourceChange(existing, r);
       if (existing) s.resources[s.resources.indexOf(existing)] = r;
       else s.resources.push(r);
       validateUniqueResources();
@@ -295,6 +347,45 @@ export function mutate(
         existing,
         r,
       );
+      break;
+    }
+    case "resource.bulkUpdate": {
+      needAdmin();
+      const selected = ids(action.ids, "服务器");
+      const changes = checkedChanges(action.changes);
+      const rows = selected.map((id) => ({
+        previous:
+          s.resources.find((r) => r.id === id && !r.deleted) ??
+          fail("部分服务器已不存在", 404),
+        changes,
+      }));
+      saveBulkRows(rows, true);
+      break;
+    }
+    case "resource.updateByIp": {
+      needAdmin();
+      if (
+        !Array.isArray(action.rows) ||
+        !action.rows.length ||
+        action.rows.length > 200
+      )
+        fail("每批更新1至200行");
+      const seen = new Set<string>();
+      const rows = action.rows.map((value: unknown) => {
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          fail("更新表格格式不正确");
+        const { ip, ...fields } = value as Record<string, unknown>;
+        const address = text(ip, "IP", 64);
+        if (seen.has(address.toLowerCase())) fail(`更新表格IP重复：${address}`);
+        seen.add(address.toLowerCase());
+        const previous = s.resources.find(
+          (r) => !r.deleted && r.ip.toLowerCase() === address.toLowerCase(),
+        );
+        if (!previous)
+          fail(`未找到IP为 ${address} 的服务器，整批更新已取消`, 404);
+        return { previous, changes: checkedChanges(fields) };
+      });
+      saveBulkRows(rows);
       break;
     }
     case "resource.import": {

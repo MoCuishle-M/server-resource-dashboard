@@ -2337,3 +2337,64 @@ th {
   white-space: normal;
   line-height: 1.6;
 }
+.bulk-edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px 22px;
+}
+.bulk-edit-field > .checkbox-label {
+  margin: 0 0 8px;
+  color: #7d8998;
+}
+.bulk-edit-field > .field > span {
+  display: none;
+}
+.bulk-edit-field input:disabled,
+.bulk-edit-field select:disabled {
+  background: #f7f8fa;
+  color: #adb4bf;
+}
+.bulk-edit-preview {
+  max-height: 220px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.import-help {
+  font-size: 11px;
+  color: #8c98a6;
+  line-height: 1.8;
+  margin: 14px 0;
+}
+.import-file {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  color: #8392a5;
+  font-size: 11px;
+  margin: 12px 0;
+}
+.import-mode {
+  padding: 0;
+  margin-bottom: 17px;
+}
+.import-mode .field {
+  min-width: 270px;
+}
+.bulk-text:disabled {
+  background: #f7f9fb;
+}
+.import-preview td {
+  white-space: normal;
+  min-width: 90px;
+  max-width: 230px;
+  word-break: break-word;
+}
+@media (max-width: 650px) {
+  .bulk-edit-grid {
+    grid-template-columns: 1fr;
+  }
+  .import-mode .field {
+    min-width: 0;
+    width: 100%;
+  }
+}

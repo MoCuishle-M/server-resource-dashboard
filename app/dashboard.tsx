@@ -61,6 +61,12 @@ import {
 } from "@/lib/domain";
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import { downloadCSV, importRows } from "@/lib/csv";
+import {
+  readResourceWorkbook,
+  workbookResourceRows,
+  downloadResourceTemplate,
+  type ImportWorkbook,
+} from "@/lib/excel";
 import type {
   Action,
   Actor,
@@ -247,6 +253,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [bulkText, setBulkText] = useState(""),
     [bulkError, setBulkError] = useState(""),
     [deleteIds, setDeleteIds] = useState<string[]>([]);
+  const [bulkFields, setBulkFields] = useState<Record<string, boolean>>({});
+  const [bulkValues, setBulkValues] = useState<Record<string, string>>({});
+  const [importMode, setImportMode] = useState<"add" | "update">("add");
+  const [workbook, setWorkbook] = useState<ImportWorkbook>([]);
+  const [sheetIndex, setSheetIndex] = useState(0);
+  const [importFileName, setImportFileName] = useState("");
+  const [readingFile, setReadingFile] = useState(false);
   const [requestResources, setRequestResources] = useState<string[]>([]),
     [requestGroup, setRequestGroup] = useState("g1"),
     [requestDate, setRequestDate] = useState(chinaDate()),
@@ -390,9 +403,11 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   );
   let parsedRows: ReturnType<typeof importRows> = [];
   let parseError = "";
-  if (bulkText.trim()) {
+  if (workbook.length || bulkText.trim()) {
     try {
-      parsedRows = importRows(bulkText);
+      parsedRows = workbook.length
+        ? workbookResourceRows(workbook[sheetIndex], importMode)
+        : importRows(bulkText, importMode);
     } catch (e) {
       parseError = (e as Error).message;
     }
@@ -1146,6 +1161,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               onClick={() => {
                                 setBulkText("");
                                 setBulkError("");
+                                setWorkbook([]);
+                                setImportFileName("");
+                                setSheetIndex(0);
+                                setImportMode("add");
                                 setModal("import");
                               }}
                             >
@@ -1216,6 +1235,37 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                           onClick={() => openRequest(selected)}
                         >
                           申请所选资源
+                        </button>
+                        <button
+                          className="text-button"
+                          onClick={() => {
+                            const rows = resources.filter((r) =>
+                              selected.includes(r.id),
+                            );
+                            const values: Record<string, string> = {
+                              name: "{name}",
+                            };
+                            for (const key of [
+                              "type",
+                              "accessMode",
+                              "sharingMode",
+                              "location",
+                              "note",
+                              "status",
+                            ] as const) {
+                              values[key] = rows.every(
+                                (r) => r[key] === rows[0][key],
+                              )
+                                ? rows[0][key]
+                                : "";
+                            }
+                            setBulkValues(values);
+                            setBulkFields({});
+                            setModal("bulk-edit");
+                          }}
+                        >
+                          <Pencil size={14} />
+                          批量修改
                         </button>
                         <button
                           className="text-button danger-text"
@@ -2104,14 +2154,224 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           </form>
         </Modal>
       )}
+      {modal === "bulk-edit" && (
+        <Modal
+          wide
+          title={`批量修改${selected.length}台服务器`}
+          sub="每批最多200台，只修改勾选字段，IP保持不变。位置和备注勾选后留空可清除。"
+          onClose={() => setModal(null)}
+        >
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const changes = Object.fromEntries(
+                Object.keys(bulkFields)
+                  .filter((key) => bulkFields[key])
+                  .map((key) => [key, bulkValues[key] ?? ""]),
+              );
+              if (
+                await run(
+                  { type: "resource.bulkUpdate", ids: selected, changes },
+                  `已批量修改${selected.length}台服务器`,
+                )
+              ) {
+                setModal(null);
+                setSelected([]);
+              }
+            }}
+          >
+            <div className="bulk-edit-grid">
+              {[
+                { key: "name", label: "名称模板" },
+                { key: "type", label: "类型" },
+                { key: "accessMode", label: "使用方式" },
+                { key: "sharingMode", label: "占用模式" },
+                { key: "location", label: "位置" },
+                { key: "note", label: "备注" },
+                { key: "status", label: "资源状态" },
+              ].map((field) => (
+                <div className="bulk-edit-field" key={field.key}>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      aria-label={`修改${field.label}`}
+                      checked={!!bulkFields[field.key]}
+                      onChange={(e) =>
+                        setBulkFields({
+                          ...bulkFields,
+                          [field.key]: e.target.checked,
+                        })
+                      }
+                    />
+                    {field.label}
+                  </label>
+                  <Field label={field.label}>
+                    {["accessMode", "sharingMode", "status"].includes(
+                      field.key,
+                    ) ? (
+                      <select
+                        aria-label={`批量${field.label}`}
+                        disabled={!bulkFields[field.key]}
+                        required={!!bulkFields[field.key]}
+                        value={bulkValues[field.key] ?? ""}
+                        onChange={(e) =>
+                          setBulkValues({
+                            ...bulkValues,
+                            [field.key]: e.target.value,
+                          })
+                        }
+                      >
+                        <option value="">请选择</option>
+                        {(field.key === "accessMode"
+                          ? [
+                              ["bare", "通过裸机使用"],
+                              ["lingshu", "通过灵枢平台使用"],
+                            ]
+                          : field.key === "sharingMode"
+                            ? [
+                                ["exclusive", "独占"],
+                                ["shared", "共享"],
+                              ]
+                            : [
+                                ["available", "可申请"],
+                                ["maintenance", "维护中"],
+                              ]
+                        ).map(([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        aria-label={`批量${field.label}`}
+                        disabled={!bulkFields[field.key]}
+                        required={
+                          !!bulkFields[field.key] &&
+                          ["name", "type"].includes(field.key)
+                        }
+                        maxLength={
+                          field.key === "note"
+                            ? 1000
+                            : field.key === "location"
+                              ? 100
+                              : 80
+                        }
+                        value={bulkValues[field.key] ?? ""}
+                        onChange={(e) =>
+                          setBulkValues({
+                            ...bulkValues,
+                            [field.key]: e.target.value,
+                          })
+                        }
+                      />
+                    )}
+                  </Field>
+                </div>
+              ))}
+            </div>
+            <p className="import-help">
+              名称支持 {"{name}"} 原名称、{"{ip}"} 原IP、{"{index}"}{" "}
+              选中序号。例如“苏州服务器-{"{ip}"}”。最终名称仍需唯一。
+            </p>
+            <div className="table-scroll bulk-edit-preview">
+              <table>
+                <thead>
+                  <tr>
+                    <th>当前名称</th>
+                    <th>IP（保持不变）</th>
+                    {bulkFields.name && <th>修改后名称预览</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {selected.map((id, index) => {
+                    const r = resources.find((r) => r.id === id);
+                    return r ? (
+                      <tr key={id}>
+                        <td>{r.name}</td>
+                        <td className="mono">{r.ip}</td>
+                        {bulkFields.name && (
+                          <td>
+                            {(bulkValues.name ?? "").replace(
+                              /\{(name|ip|index)\}/g,
+                              (_, key) =>
+                                key === "name"
+                                  ? r.name
+                                  : key === "ip"
+                                    ? r.ip
+                                    : String(index + 1),
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ) : null;
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="modal-footer">
+              <span className="muted text-small">
+                任一资源校验失败，整批不修改。
+              </span>
+              <span className="spacer" />
+              <button
+                type="button"
+                className="button"
+                onClick={() => setModal(null)}
+              >
+                取消
+              </button>
+              <button
+                className="button primary"
+                disabled={
+                  busy ||
+                  !Object.values(bulkFields).some(Boolean) ||
+                  selected.length > 200
+                }
+              >
+                <Check size={15} />
+                确认批量修改
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {modal === "import" && (
         <Modal
           wide
           title="从表格批量导入"
-          sub="从 Excel 复制含表头的单元格，或上传 UTF-8 CSV。每批最多200台，整批校验通过后写入。"
+          sub="支持 Excel（.xlsx）、CSV及粘贴表格，每批最多200行。选择新增资源或按IP更新，确认预览后整批写入。"
           onClose={() => setModal(null)}
         >
+          <div className="filters import-mode">
+            <Field label="导入方式">
+              <select
+                aria-label="导入方式"
+                value={importMode}
+                onChange={(e) =>
+                  setImportMode(e.target.value as "add" | "update")
+                }
+              >
+                <option value="add">新增服务器资源</option>
+                <option value="update">按IP更新已有资源（IP保持不变）</option>
+              </select>
+            </Field>
+          </div>
           <div className="import-toolbar">
+            <button
+              className="button"
+              disabled={readingFile}
+              onClick={async () => {
+                try {
+                  await downloadResourceTemplate();
+                } catch {
+                  setBulkError("Excel模板生成失败，请稍后重试");
+                }
+              }}
+            >
+              <ArrowDownToLine size={15} />
+              下载 Excel 模板
+            </button>
             <button
               className="button"
               onClick={() =>
@@ -2124,6 +2384,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "占用模式",
                     "位置",
                     "备注",
+                    "状态",
                   ],
                   [
                     "Atlas-示例-01",
@@ -2133,46 +2394,106 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "独占",
                     "机房A",
                     "请替换示例内容",
+                    "可申请",
                   ],
                 ])
               }
             >
               <ArrowDownToLine size={15} />
-              下载模板
+              下载 CSV 模板
             </button>
             <label className="button file-button">
               <Upload size={15} />
-              上传 CSV
+              {readingFile ? "正在读取…" : "上传 Excel / CSV"}
               <input
+                aria-label="上传资源表格"
+                disabled={readingFile}
                 type="file"
-                accept=".csv,.tsv,text/csv,text/tab-separated-values"
+                accept=".xlsx,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/tab-separated-values"
                 onChange={async (e) => {
                   const file = e.target.files?.[0];
-                  if (file) {
-                    if (file.size > 300000) {
-                      setBulkError("文件不能超过300KB");
-                      return;
-                    }
-                    setBulkText(await file.text());
-                    setBulkError("");
+                  e.target.value = "";
+                  if (!file) return;
+                  setReadingFile(true);
+                  setBulkError("");
+                  setWorkbook([]);
+                  setBulkText("");
+                  setImportFileName("");
+                  setSheetIndex(0);
+                  try {
+                    if (file.size > 5 * 1024 * 1024)
+                      throw new Error("文件不能超过5MB，请分批导入");
+                    if (/\.xlsx$/i.test(file.name)) {
+                      const sheets = await readResourceWorkbook(
+                        await file.arrayBuffer(),
+                      );
+                      setWorkbook(sheets);
+                    } else if (/\.(csv|tsv)$/i.test(file.name)) {
+                      setBulkText(await file.text());
+                    } else
+                      throw new Error(
+                        "请选择 .xlsx、.csv 或 .tsv 文件；旧版 .xls 请先另存为 .xlsx",
+                      );
+                    setImportFileName(file.name);
+                  } catch (e) {
+                    setBulkError(
+                      e instanceof Error ? e.message : "文件读取失败",
+                    );
+                  } finally {
+                    setReadingFile(false);
                   }
                 }}
               />
             </label>
-            <span className="muted text-small">
-              使用方式：裸机 / 灵枢平台；占用模式：独占 / 共享（可选，默认独占）
-            </span>
           </div>
+          {importFileName && (
+            <div className="import-file">
+              <span>{importFileName}</span>
+              <button
+                className="text-button"
+                onClick={() => {
+                  setWorkbook([]);
+                  setBulkText("");
+                  setImportFileName("");
+                  setBulkError("");
+                }}
+              >
+                清除文件
+              </button>
+            </div>
+          )}
+          {workbook.length > 0 && (
+            <Field label="选择工作表">
+              <select
+                aria-label="选择工作表"
+                value={sheetIndex}
+                onChange={(e) => setSheetIndex(Number(e.target.value))}
+              >
+                {workbook.map((sheet, i) => (
+                  <option key={i} value={i}>
+                    {sheet.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          <p className="import-help">
+            {importMode === "add"
+              ? "必填：名称、类型、IP、使用方式。占用模式和状态默认独占、可申请。"
+              : "按IP匹配已有服务器，填写要更新的列；空白单元格保留原值，未匹配IP将阻止整批更新。"}
+          </p>
           <textarea
             className="bulk-text"
             aria-label="粘贴导入表格"
             placeholder={
               "名称\t类型\tIP\t使用方式\t位置\t备注\n服务器01\tAscend 910B\t192.0.2.10\t裸机\t机房A\t"
             }
+            disabled={readingFile || workbook.length > 0}
             value={bulkText}
             onChange={(e) => {
               setBulkText(e.target.value);
               setBulkError("");
+              setImportFileName("");
             }}
           />
           {(parseError || bulkError) && (
@@ -2196,6 +2517,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       <th>IP</th>
                       <th>使用方式</th>
                       <th>占用模式</th>
+                      <th>位置</th>
+                      <th>备注</th>
+                      <th>状态</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2203,13 +2527,40 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       <tr key={i}>
                         <td>
                           {r.name || (
-                            <span className="danger-text">缺少名称</span>
+                            <span
+                              className={
+                                importMode === "add" ? "danger-text" : "muted"
+                              }
+                            >
+                              {importMode === "add" ? "缺少名称" : "保留原值"}
+                            </span>
                           )}
                         </td>
-                        <td>{r.type}</td>
+                        <td>{r.type ?? "保留原值"}</td>
                         <td className="mono">{r.ip}</td>
-                        <td>{r.accessMode === "bare" ? "裸机" : "灵枢平台"}</td>
-                        <td>{r.sharingMode === "shared" ? "共享" : "独占"}</td>
+                        <td>
+                          {r.accessMode
+                            ? r.accessMode === "bare"
+                              ? "裸机"
+                              : "灵枢平台"
+                            : "保留原值"}
+                        </td>
+                        <td>
+                          {r.sharingMode
+                            ? r.sharingMode === "shared"
+                              ? "共享"
+                              : "独占"
+                            : "保留原值"}
+                        </td>
+                        <td>{r.location ?? "保留原值"}</td>
+                        <td>{r.note ?? "保留原值"}</td>
+                        <td>
+                          {r.status
+                            ? r.status === "maintenance"
+                              ? "维护中"
+                              : "可申请"
+                            : "保留原值"}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2219,7 +2570,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           )}
           <div className="modal-footer">
             <span className="muted text-small">
-              不会覆盖已有服务器；重复 IP 或名称将整批阻止导入。
+              {importMode === "add"
+                ? "新增不会覆盖已有服务器；重复IP或名称将整批阻止导入。"
+                : "按IP更新已有资源；IP不修改，空白保留原值。"}
             </span>
             <span className="spacer" />
             <button className="button" onClick={() => setModal(null)}>
@@ -2229,6 +2582,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               className="button primary"
               disabled={
                 busy ||
+                readingFile ||
+                !!bulkError ||
                 !parsedRows.length ||
                 !!parseError ||
                 parsedRows.length > 200
@@ -2236,8 +2591,14 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               onClick={async () => {
                 if (
                   await run(
-                    { type: "resource.import", rows: parsedRows },
-                    `已导入${parsedRows.length}台服务器`,
+                    {
+                      type:
+                        importMode === "add"
+                          ? "resource.import"
+                          : "resource.updateByIp",
+                      rows: parsedRows,
+                    },
+                    `已${importMode === "add" ? "导入" : "更新"}${parsedRows.length}台服务器`,
                   )
                 )
                   setModal(null);

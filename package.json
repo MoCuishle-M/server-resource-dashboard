@@ -16,7 +16,9 @@
     "test": "node scripts/test.mjs",
     "test:e2e": "node tests/browser.mjs",
     "test:api": "node tests/native-api.mjs",
-    "test:sharing": "node tests/sharing-browser.mjs"
+    "test:sharing": "node tests/sharing-browser.mjs",
+    "test:bulk": "node tests/bulk-browser.mjs",
+    "test:bulk-api": "node tests/bulk-api.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -28,6 +30,7 @@
     "date-fns": "^4.4.0",
     "drizzle-orm": "0.45.2",
     "embla-carousel-react": "^8.6.0",
+    "exceljs": "4.4.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^1.31.0",
     "next": "16.3.4",

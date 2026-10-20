@@ -28,9 +28,23 @@ export function parseTable(input: string) {
   if (row.some(Boolean)) rows.push(row);
   return rows;
 }
-export function importRows(input: string) {
-  const table = parseTable(input);
+export type ResourceImportRow = {
+  ip: string;
+  name?: string;
+  type?: string;
+  accessMode?: string;
+  sharingMode?: string;
+  location?: string;
+  note?: string;
+  status?: string;
+};
+export function resourceTableRows(
+  input: string[][],
+  mode: "add" | "update" = "add",
+): ResourceImportRow[] {
+  const table = input.filter((row) => row.some((cell) => cell.trim()));
   if (table.length < 2) throw new Error("请包含表头和至少一行数据");
+  if (table.length > 201) throw new Error("每批最多200行，请分批导入");
   const aliases: Record<string, string[]> = {
     name: ["名称", "服务器名称", "name"],
     type: ["类型", "服务器类型", "type"],
@@ -39,39 +53,70 @@ export function importRows(input: string) {
     sharingMode: ["占用模式", "共享模式", "sharingMode"],
     location: ["位置", "机房", "location"],
     note: ["备注", "note"],
+    status: ["状态", "资源状态", "status"],
   };
-  const header = table[0];
+  const header = table[0].map((h) => h.replace(/^\uFEFF/, "").trim());
   const index = Object.fromEntries(
-    Object.entries(aliases).map(([key, names]) => [
-      key,
-      header.findIndex((h) => names.includes(h)),
-    ]),
+    Object.entries(aliases).map(([key, names]) => {
+      const matches = header.flatMap((h, i) => (names.includes(h) ? [i] : []));
+      if (matches.length > 1) throw new Error(`表头重复：${names[0]}`);
+      return [key, matches[0] ?? -1];
+    }),
   );
-  for (const key of ["name", "type", "ip", "accessMode"])
+  for (const key of mode === "add"
+    ? ["name", "type", "ip", "accessMode"]
+    : ["ip"])
     if (index[key] < 0) throw new Error(`缺少列：${aliases[key][0]}`);
-  return table.slice(1).map((r, i) => {
-    const get = (key: string) => r[index[key]] ?? "";
-    let mode = get("accessMode");
-    if (["裸机", "bare", "通过裸机使用"].includes(mode)) mode = "bare";
-    else if (["灵枢", "灵枢平台", "lingshu", "通过灵枢平台使用"].includes(mode))
-      mode = "lingshu";
-    else throw new Error(`第${i + 2}行：使用方式应为“裸机”或“灵枢平台”`);
-    const sharing = get("sharingMode");
-    let sharingMode = "exclusive";
-    if (["共享", "shared"].includes(sharing)) sharingMode = "shared";
-    else if (!["", "独占", "exclusive"].includes(sharing))
-      throw new Error(`第${i + 2}行：占用模式应为“独占”或“共享”`);
-    return {
-      sharingMode,
-      name: get("name"),
-      type: get("type"),
-      ip: get("ip"),
-      accessMode: mode,
-      location: get("location"),
-      note: get("note"),
-      status: "available",
-    };
+  const access: Record<string, string> = {
+    裸机: "bare",
+    bare: "bare",
+    通过裸机使用: "bare",
+    灵枢: "lingshu",
+    灵枢平台: "lingshu",
+    lingshu: "lingshu",
+    通过灵枢平台使用: "lingshu",
+  };
+  const sharing: Record<string, string> = {
+    独占: "exclusive",
+    exclusive: "exclusive",
+    共享: "shared",
+    shared: "shared",
+  };
+  const status: Record<string, string> = {
+    可申请: "available",
+    可用: "available",
+    available: "available",
+    维护中: "maintenance",
+    maintenance: "maintenance",
+  };
+  return table.slice(1).map((row, i) => {
+    const get = (key: string) => (row[index[key]] ?? "").trim();
+    const out: Record<string, string> = { ip: get("ip") };
+    if (!out.ip) throw new Error(`第${i + 2}行：IP不能为空`);
+    for (const key of Object.keys(aliases).filter((k) => k !== "ip")) {
+      const value = get(key);
+      if (mode === "update" && !value) continue;
+      if (key === "accessMode") {
+        if (!access[value])
+          throw new Error(`第${i + 2}行：使用方式应为“裸机”或“灵枢平台”`);
+        out[key] = access[value];
+      } else if (key === "sharingMode") {
+        if (value && !sharing[value])
+          throw new Error(`第${i + 2}行：占用模式应为“独占”或“共享”`);
+        out[key] = sharing[value] ?? "exclusive";
+      } else if (key === "status") {
+        if (value && !status[value])
+          throw new Error(`第${i + 2}行：状态应为“可申请”或“维护中”`);
+        out[key] = status[value] ?? "available";
+      } else out[key] = value;
+    }
+    if (mode === "update" && Object.keys(out).length === 1)
+      throw new Error(`第${i + 2}行：除IP外至少填写一个要更新的字段`);
+    return out as ResourceImportRow;
   });
+}
+export function importRows(input: string, mode: "add" | "update" = "add") {
+  return resourceTableRows(parseTable(input), mode);
 }
 export function csvCell(v: unknown) {
   let s = String(v ?? "");
