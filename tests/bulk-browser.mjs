@@ -42,7 +42,7 @@ try {
       ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注", "状态"],
       [
         "Excel-A",
-        "910C*8卡",
+        "950DT  * 8卡",
         "198.51.100.151",
         "裸机",
         "共享",
@@ -52,7 +52,7 @@ try {
       ],
       [
         "Excel-B",
-        "910C*8卡",
+        "950DT  * 8卡",
         "198.51.100.152",
         "灵枢平台",
         "共享",
@@ -77,6 +77,19 @@ try {
   await d.getByText("导入备注A", { exact: true }).waitFor();
   await d.getByRole("button", { name: "确认导入", exact: true }).click();
   await d.waitFor({ state: "hidden" });
+  // The native option value must preserve consecutive whitespace from Excel.
+  const typeFilter = page.getByLabel("类型筛选", { exact: true });
+  const importedType = "950DT  * 8卡";
+  assert.equal(
+    await typeFilter.locator("option").evaluateAll((options, type) =>
+      options.find((option) => option.textContent === type)?.value,
+      importedType,
+    ),
+    importedType,
+  );
+  await typeFilter.selectOption(importedType);
+  assert.equal(await page.locator(".resource-table tbody tr").count(), 2);
+  await typeFilter.selectOption("");
   await page.getByLabel("搜索资源").fill("Excel-");
   await page.getByLabel("全选当前结果").check();
   await page.getByRole("button", { name: "批量修改", exact: true }).click();

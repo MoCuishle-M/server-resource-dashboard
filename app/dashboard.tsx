@@ -1202,7 +1202,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       >
                         <option value="">全部类型</option>
                         {types.map((t) => (
-                          <option key={t}>{t}</option>
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
                         ))}
                       </select>
                       <select
