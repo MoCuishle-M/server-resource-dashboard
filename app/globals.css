@@ -985,6 +985,52 @@ tbody tr:hover {
   padding: 9px 12px;
   max-width: 200px;
 }
+.type-filter-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  min-width: 150px;
+  max-width: 220px;
+  padding: 9px 12px;
+  border: 1px solid #dde2e8;
+  border-radius: 7px;
+  background: white;
+  font-size: 11px;
+}
+.type-filter-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.type-filter-button svg { flex-shrink: 0; }
+.type-filter-button.is-filtered { border-color: #e8b998; color: #b36b36; background: #fffaf6; }
+.type-filter-popup {
+  z-index: 90;
+  width: min(330px, calc(100vw - 24px));
+  max-height: var(--radix-popover-content-available-height);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 14px;
+  border: 1px solid #e2e7ed;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 12px 36px #20354d24;
+}
+.type-filter-popup header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.type-filter-popup h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.type-filter-popup header > span, .type-filter-popup footer > span { font-size: 10px; color: #96a0ad; }
+.type-filter-search { flex: 0 0 auto; min-width: 0; max-width: none; }
+.type-filter-actions { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 6px; }
+.type-filter-actions label, .type-filter-options label { display: flex; align-items: center; gap: 9px; font-size: 12px; cursor: pointer; }
+.type-filter-options { min-height: 0; max-height: 240px; overflow-y: auto; overscroll-behavior: contain; margin-bottom: 12px; }
+.type-filter-options label { padding: 9px 5px; border-radius: 4px; }
+.type-filter-options label:hover { background: #f6f8fa; }
+.type-filter-options label span { overflow-wrap: anywhere; min-width: 0; white-space: pre-wrap; }
+.type-filter-empty { padding: 18px 5px; color: #96a0ad; font-size: 12px; }
+.type-filter-popup footer { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex-shrink: 0; padding-top: 12px; border-top: 1px solid #edf0f4; }
+.type-filter-popup footer > div { display: flex; gap: 7px; }
+.type-filter-popup footer .button { padding: 7px 12px; font-size: 11px; }
+@media (max-width: 650px) {
+  .type-filter-button { min-width: 0; max-width: none; flex: 1; font-size: 10px; padding: 8px; }
+}
 .muted {
   color: #9ca6b2;
 }

@@ -77,19 +77,56 @@ try {
   await d.getByText("导入备注A", { exact: true }).waitFor();
   await d.getByRole("button", { name: "确认导入", exact: true }).click();
   await d.waitFor({ state: "hidden" });
-  // The native option value must preserve consecutive whitespace from Excel.
-  const typeFilter = page.getByLabel("类型筛选", { exact: true });
+  const typeFilter = page.getByRole("button", { name: "类型筛选", exact: true });
   const importedType = "950DT  * 8卡";
-  assert.equal(
-    await typeFilter.locator("option").evaluateAll((options, type) =>
-      options.find((option) => option.textContent === type)?.value,
-      importedType,
-    ),
-    importedType,
-  );
-  await typeFilter.selectOption(importedType);
+  async function chooseTypes(types = null) {
+    await typeFilter.click();
+    const filter = page.getByRole("dialog", { name: "类型筛选", exact: true });
+    await filter.getByRole("button", { name: "清空", exact: true }).click();
+    if (types === null) await filter.getByLabel("全选类型", { exact: true }).check();
+    else {
+      const boxes = filter.getByRole("group", { name: "类型选项" }).getByRole("checkbox");
+      const values = await boxes.evaluateAll(inputs => inputs.map(input => input.value));
+      for (const type of types) {
+        const index = values.indexOf(type);
+        assert(index >= 0, `Missing type: ${type}`);
+        await boxes.nth(index).check();
+      }
+    }
+    await filter.getByRole("button", { name: "确定", exact: true }).click();
+    await filter.waitFor({ state: "hidden" });
+  }
+  // Checkbox values preserve the exact imported type, including repeated spaces.
+  await chooseTypes([importedType]);
   assert.equal(await page.locator(".resource-table tbody tr").count(), 2);
-  await typeFilter.selectOption("");
+  await chooseTypes([importedType, "Ascend 910B · 8卡"]);
+  assert.equal(await page.locator(".resource-table tbody tr").count(), 12);
+  assert((await typeFilter.innerText()).includes("已选 2 种类型"));
+  await typeFilter.click();
+  let filter = page.getByRole("dialog", { name: "类型筛选", exact: true });
+  await filter.getByRole("button", { name: "清空", exact: true }).click();
+  await filter.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(await page.locator(".resource-table tbody tr").count(), 12);
+  await chooseTypes([]);
+  await page.getByRole("heading", { name: "没有符合条件的服务器", exact: true }).waitFor();
+  assert((await typeFilter.innerText()).includes("未选择类型"));
+  await typeFilter.click();
+  filter = page.getByRole("dialog", { name: "类型筛选", exact: true });
+  await filter.getByLabel("搜索类型", { exact: true }).fill("950DT");
+  await filter.getByLabel("全选搜索结果", { exact: true }).check();
+  const imported = filter.getByRole("group", { name: "类型选项" }).getByRole("checkbox");
+  assert.equal(await imported.inputValue(), importedType);
+  await filter.getByRole("button", { name: "确定", exact: true }).click();
+  assert.equal(await page.locator(".resource-table tbody tr").count(), 2);
+  await typeFilter.focus();
+  await typeFilter.press("Enter");
+  filter = page.getByRole("dialog", { name: "类型筛选", exact: true });
+  await filter.getByRole("button", { name: "清空", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await filter.waitFor({ state: "hidden" });
+  assert.equal(await typeFilter.evaluate(e => e === document.activeElement), true);
+  assert.equal(await page.locator(".resource-table tbody tr").count(), 2);
+  await chooseTypes();
   const searchInput = page.getByLabel("搜索资源", { exact: true });
   assert.equal(await searchInput.evaluate(e => e.tagName), "TEXTAREA");
   for (const separator of [" ", ",", "\n", "\r\n", ", \n\t,"]) {
@@ -98,12 +135,12 @@ try {
   }
   await searchInput.fill("198.51.100.151,198.51.100.151\n198.51.100.152,198.51.100.250");
   assert.equal(await page.locator(".resource-table tbody tr").count(), 2);
-  await typeFilter.selectOption(importedType);
+  await chooseTypes([importedType, "Ascend 910B · 8卡"]);
   await page.getByLabel("使用方式筛选").selectOption("bare");
   assert.equal(await page.locator(".resource-table tbody tr").count(), 1);
   assert((await page.locator(".resource-table tbody tr").innerText()).includes("198.51.100.151"));
   await page.getByLabel("使用方式筛选").selectOption("");
-  await typeFilter.selectOption("");
+  await chooseTypes();
   await searchInput.fill("198.51.100.250");
   await page.getByRole("heading", { name: "没有符合条件的服务器", exact: true }).waitFor();
   await page.getByLabel("搜索资源").fill("Excel-");
@@ -194,6 +231,18 @@ try {
     .getByRole("dialog")
     .getByRole("button", { name: "取消", exact: true })
     .click();
+  await typeFilter.click();
+  filter = page.getByRole("dialog", { name: "类型筛选", exact: true });
+  const bounds = await filter.boundingBox();
+  assert(bounds.x >= 0 && bounds.x + bounds.width <= 390);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390);
+  await page.screenshot({ path: "outputs/type-filter-mobile.png", fullPage: true });
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await typeFilter.click();
+  await page.screenshot({ path: "outputs/type-filter-desktop.png", fullPage: true });
+  await page.getByLabel("搜索资源", { exact: true }).click();
+  await filter.waitFor({ state: "hidden" });
   assert.deepEqual(errors, []);
   console.log(
     "PASS: real XLSX template/download, worksheet selection, Excel import and preview, opt-in bulk editing with immutable IP, name templates, clearing notes, IP-based workbook update, invalid file handling, history and mobile modal",

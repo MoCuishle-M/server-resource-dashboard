@@ -62,6 +62,7 @@ import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
 import type { TimelineRange } from "@/lib/schedule";
 import { resourceSearch } from "@/lib/resource-search";
+import ResourceTypeFilter from "./resource-type-filter";
 import { downloadCSV, importRows } from "@/lib/csv";
 import {
   readResourceWorkbook,
@@ -236,7 +237,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [busy, setBusy] = useState(false),
     [toast, setToast] = useState("");
   const [search, setSearch] = useState(""),
-    [typeFilter, setTypeFilter] = useState(""),
+    [typeFilter, setTypeFilter] = useState<string[] | null>(null),
     [modeFilter, setModeFilter] = useState(""),
     [stateFilter, setStateFilter] = useState(""),
     [groupFilter, setGroupFilter] = useState(""),
@@ -373,7 +374,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const filtered = resources.filter(
     (r) =>
       matchesSearch(r) &&
-      (!typeFilter || r.type === typeFilter) &&
+      (typeFilter === null || typeFilter.includes(r.type)) &&
       (!modeFilter || r.accessMode === modeFilter) &&
       (!stateFilter ||
         (stateFilter === "used"
@@ -1192,18 +1193,11 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                           onChange={(e) => setSearch(e.target.value)}
                         />
                       </div>
-                      <select
-                        aria-label="类型筛选"
-                        value={typeFilter}
-                        onChange={(e) => setTypeFilter(e.target.value)}
-                      >
-                        <option value="">全部类型</option>
-                        {types.map((t) => (
-                          <option key={t} value={t}>
-                            {t}
-                          </option>
-                        ))}
-                      </select>
+                      <ResourceTypeFilter
+                        types={types}
+                        selected={typeFilter}
+                        onChange={setTypeFilter}
+                      />
                       <select
                         aria-label="使用方式筛选"
                         value={modeFilter}
