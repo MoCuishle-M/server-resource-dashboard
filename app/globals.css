@@ -1082,8 +1082,8 @@ tbody tr:hover {
   table-layout: fixed;
   min-width: 1020px;
 }
-.schedule-table th:first-child {
-  width: 230px;
+.schedule-server-col {
+  width: 250px;
 }
 .schedule-table th {
   padding: 15px 12px;
@@ -1099,15 +1099,94 @@ tbody tr:hover {
   font-size: 9px;
 }
 .schedule-table td {
-  padding: 9px 8px;
+  padding: 0;
   border-right: 1px solid #f0f2f5;
   vertical-align: top;
 }
 .schedule-table td:first-child {
-  padding: 19px 24px;
+  padding: 14px 16px;
 }
-.schedule-cell {
-  height: 100px;
+.schedule-heading, .schedule-controls .section-tools, .schedule-range-form {
+  flex-wrap: wrap;
+}
+.schedule-modes {
+  display: flex;
+  padding: 3px;
+  gap: 3px;
+  background: #f2f5f8;
+  border-radius: 7px;
+}
+.schedule-modes button {
+  border: 0;
+  border-radius: 5px;
+  padding: 8px 13px;
+  background: transparent;
+  color: #728194;
+  font-size: 12px;
+}
+.schedule-modes button.active {
+  background: white;
+  color: #334c65;
+  box-shadow: 0 1px 4px #23374b12;
+}
+.schedule-controls { padding: 0 24px 16px; }
+.schedule-range-form { display: flex; align-items: end; gap: 12px; }
+.schedule-range-form label { display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: #728194; }
+.schedule-range-form input { max-width: 100%; }
+.schedule-range-label { margin: 12px 0 0; font-size: 11px; color: #728194; line-height: 1.7; }
+.schedule-error { color: #bc5049; font-size: 12px; margin-top: 10px; }
+.schedule-table th:first-child, .schedule-table td:first-child {
+  position: sticky;
+  left: 0;
+  background: #fff;
+  z-index: 3;
+  box-shadow: 1px 0 #e9edf2;
+}
+.schedule-table th:first-child { background: #fafbfc; }
+.schedule-server .resource-name { max-width: 218px; }
+.schedule-server .resource-name > span:last-child { min-width: 0; }
+.schedule-server .resource-name strong { display: block; overflow: hidden; text-overflow: ellipsis; }
+.schedule-server .resource-name small { display: block; margin-top: 4px; }
+.schedule-apply { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
+.schedule-apply:disabled { color: #aab2bd; cursor: default; }
+.schedule-table th.timeline-header { padding: 0; }
+.timeline-axis { position: relative; height: 70px; margin: 0 22px; }
+.timeline-axis .timeline-tick { position: absolute; top: 14px; font-size: 11px; color: #6d7f93; }
+.timeline-tick strong { font-size: 11px; font-weight: 500; }
+.timeline-tick small { display: block; margin-top: 7px; }
+.timeline-tick.last { transform: translateX(-100%); }
+.timeline-track { position: relative; margin: 0 22px; min-height: 82px; }
+.timeline-gridline { position: absolute; top: 0; bottom: 0; border-left: 1px solid #edf1f6; pointer-events: none; }
+.timeline-now { position: absolute; top: 0; bottom: 0; width: 1px; background: #db8d64; z-index: 2; pointer-events: none; }
+.timeline-empty { position: absolute; top: 33px; left: 14px; font-size: 11px; color: #a0abb7; }
+.timeline-track .timeline-booking {
+  position: absolute;
+  height: 60px;
+  min-width: 2px;
+  padding: 6px 3px;
+  gap: 4px;
+  margin: 0;
+  overflow: hidden;
+  border-width: 1px;
+  border-radius: 4px;
+}
+.timeline-booking strong, .timeline-booking small { white-space: nowrap; }
+.timeline-booking:hover, .timeline-booking:focus-visible { filter: brightness(.96); outline: 2px solid currentColor; outline-offset: 1px; z-index: 4; }
+.timeline-caption-list { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 0 22px 12px; }
+.timeline-caption { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; border: 0; background: transparent; color: #728194; font-size: 10px; text-align: left; }
+.timeline-caption span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timeline-caption .dot { flex-shrink: 0; }
+.timeline-caption:hover { color: #334c65; }
+.schedule-scroll:focus-visible { outline: 2px solid #829ab2; outline-offset: -2px; }
+@media (max-width: 650px) {
+  .schedule-heading { align-items: flex-start; }
+  .schedule-controls { padding: 0 16px 14px; }
+  .schedule-range-form { align-items: stretch; }
+  .schedule-range-form label { width: 100%; min-width: 0; }
+  .schedule-range-form input { width: 100%; min-width: 0; }
+  .schedule-server-col { width: 190px; }
+  .schedule-server .resource-name { max-width: 158px; }
+  .schedule-server .server-icon { display: none; }
 }
 .booking-chip {
   display: flex;

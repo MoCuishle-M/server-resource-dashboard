@@ -15,7 +15,6 @@ import {
   CalendarDays,
   Check,
   CheckCheck,
-  ChevronLeft,
   ChevronRight,
   CircleHelp,
   ClipboardList,
@@ -60,6 +59,8 @@ import {
   timeRange,
 } from "@/lib/domain";
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
+import ScheduleTimeline from "./schedule-timeline";
+import type { TimelineRange } from "@/lib/schedule";
 import { downloadCSV, importRows } from "@/lib/csv";
 import {
   readResourceWorkbook,
@@ -238,8 +239,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [modeFilter, setModeFilter] = useState(""),
     [stateFilter, setStateFilter] = useState(""),
     [groupFilter, setGroupFilter] = useState(""),
-    [requestFilter, setRequestFilter] = useState("all"),
-    [date, setDate] = useState(chinaDate());
+    [requestFilter, setRequestFilter] = useState("all");
   const [selected, setSelected] = useState<string[]>([]),
     [modal, setModal] = useState<string | null>(null),
     [editResource, setEditResource] = useState<Resource | null>(null),
@@ -418,7 +418,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     setGroupFilter("");
     setSelected([]);
   }
-  function openRequest(ids: string[] = [], slot?: number) {
+  function openRequest(ids: string[] = [], range?: TimelineRange) {
     if (!canApply) {
       setModal(actor.userId ? "identity" : "login");
       return;
@@ -428,20 +428,17 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     setRequestResources(ids);
     setRequestGroup(actor.groupId || "g1");
     setRequestDate(chinaDate(start));
-    setRequestSlot(slot ?? null);
-    if (slot !== undefined) {
-      let range = timeRange(date, slot);
-      if (range.startAt < new Date().toISOString())
-        range = timeRange(chinaDate(new Date(Date.now() + 86400000)), slot);
-      setRequestDate(chinaDate(new Date(range.startAt)));
-      setRequestStart(localInput(range.startAt));
-      setRequestEnd(localInput(range.endAt));
-    } else {
-      setRequestStart(localInput(start.toISOString()));
-      setRequestEnd(
-        localInput(new Date(start.getTime() + 3 * 3600000).toISOString()),
-      );
-    }
+    setRequestSlot(null);
+    const startAt = range
+      ? new Date(Math.max(Date.parse(range.startAt), Date.now() + 60000))
+      : start;
+    const endAt = new Date(Math.min(
+      startAt.getTime() + 3 * 3600000,
+      range ? Date.parse(range.endAt) : Infinity,
+    ));
+    setRequestDate(chinaDate(startAt));
+    setRequestStart(localInput(startAt.toISOString()));
+    setRequestEnd(localInput(endAt.toISOString()));
     setPriority("normal");
     setPurpose("");
     setModal("request");
@@ -1017,7 +1014,6 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                                 key={i}
                                 className={`slot-card ${active ? "current-slot" : ""}`}
                                 onClick={() => {
-                                  setDate(chinaDate());
                                   navigate("schedule");
                                 }}
                               >
@@ -1291,202 +1287,14 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   </section>
                 )}
                 {view === "schedule" && (
-                  <section className="panel">
-                    <div className="section-heading">
-                      <div>
-                        <h2>资源时间线</h2>
-                        <p>色块表示已批准占用；点击服务器查看完整历史。</p>
-                      </div>
-                      <div className="section-tools">
-                        <button
-                          className="icon-button border"
-                          aria-label="前一天"
-                          onClick={() =>
-                            setDate(
-                              chinaDate(
-                                new Date(
-                                  Date.parse(date + "T12:00:00+08:00") -
-                                    86400000,
-                                ),
-                              ),
-                            )
-                          }
-                        >
-                          <ChevronLeft size={17} />
-                        </button>
-                        <input
-                          className="date-input"
-                          aria-label="排期日期"
-                          type="date"
-                          value={date}
-                          onChange={(e) =>
-                            e.target.value && setDate(e.target.value)
-                          }
-                        />
-                        <button
-                          className="icon-button border"
-                          aria-label="后一天"
-                          onClick={() =>
-                            setDate(
-                              chinaDate(
-                                new Date(
-                                  Date.parse(date + "T12:00:00+08:00") +
-                                    86400000,
-                                ),
-                              ),
-                            )
-                          }
-                        >
-                          <ChevronRight size={17} />
-                        </button>
-                        <button
-                          className="button"
-                          onClick={() => setDate(chinaDate())}
-                        >
-                          今天
-                        </button>
-                      </div>
-                    </div>
-                    <div className="filters">
-                      <div className="search">
-                        <Search size={16} />
-                        <input
-                          aria-label="搜索排期资源"
-                          placeholder="搜索服务器"
-                          value={search}
-                          onChange={(e) => setSearch(e.target.value)}
-                        />
-                      </div>
-                      <select
-                        aria-label="排期组筛选"
-                        value={groupFilter}
-                        onChange={(e) => setGroupFilter(e.target.value)}
-                      >
-                        <option value="">全部团队</option>
-                        {s.groups.map((g) => (
-                          <option key={g.id} value={g.id}>
-                            {g.name}
-                          </option>
-                        ))}
-                      </select>
-                      <span className="muted text-small">
-                        跨夜：21:00 至次日 09:00
-                      </span>
-                    </div>
-                    <div className="table-scroll schedule-scroll">
-                      <table className="schedule-table">
-                        <thead>
-                          <tr>
-                            <th>服务器 / 使用方式</th>
-                            {slots.map((slot, i) => (
-                              <th key={i}>
-                                <span>{slot.label}</span>
-                                <small>
-                                  {slot.start} — {slot.end}
-                                  {i === 4 ? " +1" : ""}
-                                </small>
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {resources
-                            .filter(
-                              (r) =>
-                                !search ||
-                                `${r.name} ${r.ip}`
-                                  .toLowerCase()
-                                  .includes(search.toLowerCase()),
-                            )
-                            .map((r) => (
-                              <tr key={r.id}>
-                                <td>
-                                  <button
-                                    className="resource-name"
-                                    onClick={() => setDetail(r)}
-                                  >
-                                    <span className="server-icon">
-                                      <Server size={16} />
-                                    </span>
-                                    <span>
-                                      <strong>{r.name}</strong>
-                                      <small>
-                                        {r.accessMode === "bare"
-                                          ? "裸机"
-                                          : "灵枢平台"}{" "}
-                                        · {r.ip}
-                                      </small>
-                                    </span>
-                                  </button>
-                                </td>
-                                {slots.map((slot, i) => {
-                                  const range = timeRange(date, i);
-                                  const books = s.bookings.filter(
-                                    (b) =>
-                                      b.resourceId === r.id &&
-                                      b.status === "scheduled" &&
-                                      overlaps(b, range) &&
-                                      (!groupFilter ||
-                                        b.groupId === groupFilter),
-                                  );
-                                  return (
-                                    <td key={i} className="schedule-cell">
-                                      {books.length ? (
-                                        books.map((b) => (
-                                          <button
-                                            key={b.id}
-                                            className={`booking-chip color-${Number(b.groupId.slice(1)) % 5}`}
-                                            title={`${groupName(b.groupId)} · ${b.purpose}\n${fmt(b.startAt)} — ${fmt(b.endAt)}`}
-                                            onClick={() => setDetail(r)}
-                                          >
-                                            <strong>
-                                              {b.priority !== "normal" && (
-                                                <Zap size={12} />
-                                              )}{" "}
-                                              {groupName(b.groupId)}
-                                            </strong>
-                                            <span>{b.purpose}</span>
-                                            <small>
-                                              {fmt(b.startAt, false)} —{" "}
-                                              {fmt(b.endAt, false)}
-                                            </small>
-                                          </button>
-                                        ))
-                                      ) : r.status === "maintenance" ? (
-                                        <span className="muted text-small">
-                                          维护中
-                                        </span>
-                                      ) : (
-                                        <button
-                                          className="free-slot"
-                                          onClick={() => openRequest([r.id], i)}
-                                        >
-                                          <Plus size={13} />
-                                          申请
-                                        </button>
-                                      )}
-                                    </td>
-                                  );
-                                })}
-                              </tr>
-                            ))}
-                        </tbody>
-                      </table>
-                      {!resources.length && (
-                        <Empty title="添加资源后即可查看排期" />
-                      )}
-                    </div>
-                    <div className="schedule-legend">
-                      {s.groups.map((g) => (
-                        <span key={g.id}>
-                          <i
-                            className={`dot group-${Number(g.id.slice(1)) % 5}`}
-                          />
-                          {g.name}
-                        </span>
-                      ))}
-                    </div>
-                  </section>
+                  <ScheduleTimeline
+                    resources={resources}
+                    bookings={s.bookings}
+                    groups={s.groups}
+                    now={clock}
+                    onDetail={setDetail}
+                    onRequest={openRequest}
+                  />
                 )}
                 {view === "requests" && (
                   <section className="panel">

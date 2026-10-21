@@ -17,6 +17,7 @@
     "test:e2e": "node tests/browser.mjs",
     "test:api": "node tests/native-api.mjs",
     "test:sharing": "node tests/sharing-browser.mjs",
+    "test:schedule": "node tests/schedule-browser.mjs",
     "test:bulk": "node tests/bulk-browser.mjs",
     "test:bulk-api": "node tests/bulk-api.mjs"
   },
