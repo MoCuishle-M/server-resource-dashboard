@@ -1207,13 +1207,14 @@ tbody tr:hover {
 .timeline-tick strong { font-size: calc(11px * var(--font-scale, 1.3)); font-weight: 500; }
 .timeline-tick small { display: block; margin-top: 7px; }
 .timeline-tick.last { transform: translateX(-100%); }
-.timeline-track { position: relative; margin: 0 22px; min-height: 82px; }
+.schedule-panel { --timeline-lane-height: calc(92px * var(--font-scale, 1.3)); }
+.timeline-track { position: relative; margin: 0 22px; min-height: calc(var(--timeline-lane-height) + 12px); }
 .timeline-gridline { position: absolute; top: 0; bottom: 0; border-left: 1px solid #edf1f6; pointer-events: none; }
 .timeline-now { position: absolute; top: 0; bottom: 0; width: 1px; background: #db8d64; z-index: 2; pointer-events: none; }
 .timeline-empty { position: absolute; top: 33px; left: 14px; font-size: calc(11px * var(--font-scale, 1.3)); color: #a0abb7; }
 .timeline-track .timeline-booking {
   position: absolute;
-  height: 60px;
+  height: calc(var(--timeline-lane-height) - 10px);
   min-width: 2px;
   padding: 6px 3px;
   gap: 4px;
@@ -1223,11 +1224,23 @@ tbody tr:hover {
   border-radius: 4px;
 }
 .timeline-booking strong, .timeline-booking small { white-space: nowrap; }
+.timeline-track .timeline-booking > * { flex-shrink: 0; line-height: 1.4; }
+.timeline-track .timeline-booking > strong { overflow: hidden; text-overflow: ellipsis; color: #465a70; }
+.timeline-track .timeline-booking > .timeline-purpose {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-size: calc(11px * var(--font-scale, 1.3));
+  font-weight: 500;
+  color: #334155;
+}
 .timeline-booking:hover, .timeline-booking:focus-visible { filter: brightness(.96); outline: 2px solid currentColor; outline-offset: 1px; z-index: 4; }
 .timeline-caption-list { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 0 22px 12px; }
-.timeline-caption { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; border: 0; background: transparent; color: #728194; font-size: calc(10px * var(--font-scale, 1.3)); text-align: left; }
-.timeline-caption span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.timeline-caption .dot { flex-shrink: 0; }
+.timeline-caption { display: inline-flex; align-items: flex-start; gap: 5px; min-width: 0; max-width: 100%; border: 0; background: transparent; color: #465a70; font-size: calc(11px * var(--font-scale, 1.3)); line-height: 1.5; text-align: left; }
+.timeline-caption span { white-space: normal; overflow-wrap: anywhere; }
+.timeline-caption .dot { flex-shrink: 0; margin-top: .5em; }
 .timeline-caption:hover { color: #334c65; }
 .schedule-scroll:focus-visible { outline: 2px solid #829ab2; outline-offset: -2px; }
 @media (max-width: 650px) {

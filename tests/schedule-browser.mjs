@@ -28,8 +28,10 @@ try {
     await d.getByRole("button", { name: "确认批准", exact: true }).click();
     await d.waitFor({ state: "hidden" });
   }
-  await approve("QA连续跨夜", "2026-10-23T21:30", "2026-10-24T06:45", "g1");
+  const longPurpose = "QA连续跨夜 · " + "多组共享服务器使用说明".repeat(6);
+  await approve(longPurpose, "2026-10-23T21:30", "2026-10-24T06:45", "g1");
   await approve("QA跨周共享", "2026-10-24T00:15", "2026-10-26T03:00", "g2");
+  await approve("VLLM组常态占用", "2026-10-22T00:00", "2026-11-01T00:00", "g1");
   await page.getByRole("button", { name: "使用排期", exact: true }).click();
   const label = page.locator(".schedule-range-label");
   assert.equal(await page.getByRole("button", { name: "一周", exact: true }).getAttribute("aria-pressed"), "true");
@@ -40,6 +42,30 @@ try {
   const shared = page.locator(".timeline-booking").filter({ hasText: "QA跨周共享" });
   assert.equal(await overnight.count(), 1);
   assert.equal(await shared.count(), 1);
+  const persistent = page.locator(".timeline-booking").filter({ hasText: "VLLM组常态占用" });
+  async function assertPurposeReadable(bar, fullText = false) {
+    const box = await bar.evaluate(e => {
+      const purpose = e.querySelector(".timeline-purpose");
+      const b = e.getBoundingClientRect(), p = purpose.getBoundingClientRect();
+      return { barTop: b.top, barBottom: b.bottom, top: p.top, bottom: p.bottom, height: p.height,
+        lineHeight: parseFloat(getComputedStyle(purpose).lineHeight), client: purpose.clientHeight, scroll: purpose.scrollHeight };
+    });
+    assert(box.height >= box.lineHeight - 1, `purpose compressed to ${box.height}px`);
+    assert(box.top >= box.barTop && box.bottom <= box.barBottom, "purpose extends outside the bar");
+    if (fullText) assert(box.scroll <= box.client + 1, "wide bar truncates the purpose");
+  }
+  for (const size of ["100", "115", "130", "150"]) {
+    await page.getByLabel("网页字号").selectOption(size);
+    await assertPurposeReadable(persistent, true);
+    await assertPurposeReadable(overnight);
+    const boxes = await Promise.all([overnight, shared, persistent].map(bar => bar.boundingBox()));
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++)
+      assert(boxes[i].y + boxes[i].height <= boxes[j].y || boxes[j].y + boxes[j].height <= boxes[i].y, "shared lane text overlaps");
+    const caption = page.locator(".timeline-caption span").filter({ hasText: longPurpose });
+    assert(await caption.evaluate(e => getComputedStyle(e).whiteSpace === "normal" && e.scrollWidth <= e.clientWidth + 1 && e.getBoundingClientRect().height > parseFloat(getComputedStyle(e).lineHeight)), "long caption is clipped instead of wrapping");
+  }
+  await page.screenshot({ path: "outputs/schedule-readable-text-desktop.png", fullPage: true });
+  await page.getByLabel("网页字号").selectOption("130");
   const position = async locator => locator.evaluate(e => ({ left: parseFloat(e.style.left), width: parseFloat(e.style.width), top: e.style.top }));
   let a = await position(overnight), b = await position(shared);
   assert(Math.abs(a.width - 9.25 / 168 * 100) < .001);
@@ -94,7 +120,13 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "一周", exact: true }).click();
   await page.getByLabel("搜索排期资源").fill("");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByLabel("网页字号").selectOption("150");
+  await assertPurposeReadable(persistent, true);
+  await assertPurposeReadable(overnight);
+  await page.screenshot({ path: "outputs/schedule-readable-text-mobile.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: "outputs/schedule-week.png", fullPage: true });
   assert.deepEqual(errors, []);
-  console.log("PASS: Beijing week/day/custom continuous timeline, overnight and cross-week clipping, shared lanes, team filter, invalid range, preset request windows and mobile scrolling");
+  console.log("PASS: week/day/custom timeline, continuous clipping, shared lanes, filters/presets, readable purpose text at all four font sizes, wrapped long captions and mobile layout");
 } finally { await browser.close(); }

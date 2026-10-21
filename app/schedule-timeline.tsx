@@ -97,14 +97,14 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
             <button className="resource-name" onClick={() => onDetail(r)}><span className="server-icon"><Server size={16} /></span><span><strong>{r.name}</strong><small>{r.accessMode === "bare" ? "裸机" : "灵枢平台"} · {resourceSharingMode(r) === "shared" ? "共享" : "独占"}</small><small>{r.ip}</small></span></button>
             <button className="text-button schedule-apply" disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={12} />{r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请"}</button>
           </td>
-          <td className="timeline-cell"><div className="timeline-track" style={{ height: `${layout.lanes * 70 + 12}px` }}>
+          <td className="timeline-cell"><div className="timeline-track" style={{ height: `calc(${layout.lanes} * var(--timeline-lane-height) + 12px)` }}>
             {ticks.map(tick => <i key={tick.at} className="timeline-gridline" style={{ left: `${tick.percent}%` }} aria-hidden="true" />)}
             {currentPercent >= 0 && currentPercent < 100 && <i className="timeline-now" style={{ left: `${currentPercent}%` }} title="当前时间" aria-hidden="true" />}
             {!layout.bars.length && <span className="timeline-empty">{r.status !== "available" ? resourceStatusLabels[r.status] : "暂无排期"}</span>}
             {layout.bars.map(({ booking: b, lane, left, width, continuesBefore, continuesAfter }) => {
               const label = `${groupName(b.groupId)} · ${b.purpose} · ${fullTime(b.startAt)} — ${fullTime(b.endAt)}${b.status === "released" ? " · 已提前释放" : ""}`;
-              return <button key={b.id} className={`booking-chip timeline-booking color-${Number(b.groupId.slice(1)) % 5}`} style={{ left: `${left}%`, width: `${width}%`, top: `${lane * 70 + 6}px` }} title={label} aria-label={label} onClick={() => onDetail(r)} data-booking-id={b.id}>
-                <strong>{continuesBefore ? "‹ " : ""}{b.priority !== "normal" && <Zap size={11} />}{groupName(b.groupId)}{continuesAfter ? " ›" : ""}</strong><span>{b.purpose}</span><small>{fullTime(b.startAt)} — {fullTime(b.endAt)}</small>
+              return <button key={b.id} className={`booking-chip timeline-booking color-${Number(b.groupId.slice(1)) % 5}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane} * var(--timeline-lane-height) + 6px)` }} title={label} aria-label={label} onClick={() => onDetail(r)} data-booking-id={b.id}>
+                <strong>{continuesBefore ? "‹ " : ""}{b.priority !== "normal" && <Zap size={11} />}{groupName(b.groupId)}{continuesAfter ? " ›" : ""}</strong><span className="timeline-purpose">{b.purpose}</span><small>{fullTime(b.startAt)} — {fullTime(b.endAt)}</small>
               </button>;
             })}
           </div>
