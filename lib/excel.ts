@@ -53,6 +53,7 @@ export async function downloadResourceTemplate() {
     { header: "备注", key: "note", width: 30 },
     { header: "状态", key: "status", width: 14 },
     { header: "灵枢平台状态", key: "lingshuStatus", width: 38 },
+    { header: "隐藏", key: "hidden", width: 18 },
   ];
   sheet.addRow({
     name: "Atlas-示例-01",
@@ -63,6 +64,7 @@ export async function downloadResourceTemplate() {
     location: "机房A",
     note: "请替换示例内容",
     status: "可申请",
+    hidden: "否",
   });
   sheet.getRow(1).font = { bold: true };
   sheet.views = [{ state: "frozen", ySplit: 1 }];

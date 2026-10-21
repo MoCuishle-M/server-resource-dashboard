@@ -58,7 +58,9 @@ import {
   priorityRank,
   slots,
   timeRange,
+  serializePublic,
 } from "@/lib/domain";
+import { resourceStatusLabels } from "@/lib/resource-policy";
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
 import type { TimelineRange } from "@/lib/schedule";
@@ -239,12 +241,13 @@ function Modal({
   );
 }
 export default function Dashboard({ demo = false }: { demo?: boolean }) {
-  const [s, setS] = useState<PublicState | null>(null),
+  const [stored, setS] = useState<PublicState | null>(null),
     [view, setView] = useState<View>("overview"),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [toast, setToast] = useState("");
+  const s = stored && demo ? { ...serializePublic(stored, stored.actor, stored.now, stored.adminConfigured), demo: true } : stored;
   const [search, setSearch] = useState(""),
     [typeFilter, setTypeFilter] = useState<string[] | null>(null),
     [modeFilter, setModeFilter] = useState(""),
@@ -288,6 +291,15 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [purpose, setPurpose] = useState(""),
     [priority, setPriority] = useState("normal");
   const [clock, setClock] = useState(new Date().toISOString());
+  useEffect(() => {
+    if (!s || s.actor.role === "admin") return;
+    if (stateFilter === "hidden") setStateFilter("");
+    if (detail && !s.resources.some(r => r.id === detail.id)) setDetail(null);
+    if (review && !s.requests.some(r => r.id === review.id)) setReview(null);
+    if (partialRequest && !s.requests.some(r => r.id === partialRequest.id)) setPartialRequest(null);
+    if (cancelRequest && !s.requests.some(r => r.id === cancelRequest.id)) setCancelRequest(null);
+    if (["resource", "bulk-edit", "import"].includes(modal ?? "")) setModal(null);
+  }, [stored, detail, review, partialRequest, cancelRequest, modal]);
   async function refresh(initial = false) {
     try {
       if (demo) {
@@ -338,7 +350,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
       let next: PublicState;
       if (demo) {
         next = {
-          ...mutate(s, s.actor, action),
+          ...mutate(stored!, stored!.actor, action),
           actor: s.actor,
           now: new Date().toISOString(),
           adminConfigured: true,
@@ -412,7 +424,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             ? r.status === "available" && !used.has(r.id)
             : stateFilter.startsWith("lingshu:")
               ? r.accessMode === "lingshu" && resourceLingshuStatus(r) === stateFilter.slice(8)
-              : r.status === "maintenance")) &&
+              : stateFilter === "hidden" ? !!r.hidden : r.status === stateFilter)) &&
       (!groupFilter ||
         current.some(
           (b) => b.resourceId === r.id && b.groupId === groupFilter,
@@ -484,7 +496,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   }
   function exportResources() {
     downloadCSV("服务器资源.csv", [
-      ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注", "灵枢平台状态"],
+      ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注", "灵枢平台状态", "状态", "隐藏"],
       ...filtered.map((r) => [
         r.name,
         r.type,
@@ -494,6 +506,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         r.location,
         r.note,
         resourceLingshuLabel(r),
+        resourceStatusLabels[r.status],
+        r.hidden ? "是" : "否",
       ]),
     ]);
   }
@@ -505,7 +519,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         {
           type: "resource.save",
           id: editResource?.id,
-          resource: Object.fromEntries(f),
+          resource: { ...Object.fromEntries(f), hidden: f.get("hidden") === "true" },
         },
         "服务器已保存",
       )
@@ -590,6 +604,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     <span>
                       <strong>{r.name}</strong>
                       <small className="mono">{r.ip}</small>
+                      {r.hidden && <small className="orange-text">已隐藏 · 仅管理员可见</small>}
                     </span>
                   </button>
                 </td>
@@ -615,7 +630,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 <td>
                   <Badge
                     tone={
-                      r.status === "maintenance"
+                      r.status === "unavailable" ? "red" : r.status !== "available"
                         ? "neutral"
                         : b
                           ? "orange"
@@ -623,8 +638,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     }
                   >
                     <i />
-                    {r.status === "maintenance"
-                      ? "维护中"
+                    {r.status !== "available"
+                      ? resourceStatusLabels[r.status]
                       : b
                         ? "使用中"
                         : "空闲"}
@@ -998,7 +1013,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                             resources.filter((r) => r.status === "maintenance")
                               .length
                           }
-                          台维护中 · 空闲资源可申请
+                          台维护中 · {resources.filter(r => r.status === "unavailable").length}台不可用
                         </footer>
                       </article>
                       <article className="kpi kpi-accent">
@@ -1262,6 +1277,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <option value="used">使用中</option>
                         <option value="free">空闲</option>
                         <option value="maintenance">维护中</option>
+                        <option value="unavailable">不可用</option>
+                        {admin && <option value="hidden">已隐藏（仅管理员可见）</option>}
                         {Object.entries(lingshuStatusLabels).map(([value, label]) => <option key={value} value={`lingshu:${value}`}>{label}</option>)}
                       </select>
                     </div>
@@ -1303,7 +1320,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                                 ? rows[0][key] ?? ""
                                 : "";
                             }
-                            setBulkValues(values);
+                            setBulkValues({ ...values, hidden: rows.every(r => !!r.hidden === !!rows[0].hidden) ? String(!!rows[0].hidden) : "" });
                             setBulkFields({});
                             setModal("bulk-edit");
                           }}
@@ -1983,10 +2000,18 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               <Field label="资源状态">
                 <select
                   name="status"
+                  aria-label="资源状态"
                   defaultValue={editResource?.status ?? "available"}
                 >
                   <option value="available">可申请</option>
                   <option value="maintenance">维护中</option>
+                  <option value="unavailable">不可用</option>
+                </select>
+              </Field>
+              <Field label="资源可见性" wide>
+                <select name="hidden" aria-label="资源可见性" defaultValue={String(!!editResource?.hidden)}>
+                  <option value="false">公开显示</option>
+                  <option value="true">隐藏 · 仅管理员可见</option>
                 </select>
               </Field>
               <Field label="备注" wide>
@@ -2046,7 +2071,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               const changes = Object.fromEntries(
                 Object.keys(bulkFields)
                   .filter((key) => bulkFields[key])
-                  .map((key) => [key, bulkValues[key] ?? ""]),
+                  .map((key) => [key, key === "hidden" ? bulkValues[key] === "true" : bulkValues[key] ?? ""]),
               );
               if (
                 await run(
@@ -2069,6 +2094,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 { key: "location", label: "位置" },
                 { key: "note", label: "备注" },
                 { key: "status", label: "资源状态" },
+                { key: "hidden", label: "资源可见性" },
               ].map((field) => (
                 <div className="bulk-edit-field" key={field.key}>
                   <label className="checkbox-label">
@@ -2086,7 +2112,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     {field.label}
                   </label>
                   <Field label={field.label}>
-                    {["accessMode", "lingshuStatus", "sharingMode", "status"].includes(
+                    {["accessMode", "lingshuStatus", "sharingMode", "status", "hidden"].includes(
                       field.key,
                     ) ? (
                       <select
@@ -2113,10 +2139,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                                 ["exclusive", "独占"],
                                 ["shared", "共享"],
                               ]
-                            : [
-                                ["available", "可申请"],
-                                ["maintenance", "维护中"],
-                              ]
+                            : field.key === "hidden" ? [["false", "公开显示"], ["true", "隐藏 · 仅管理员可见"]]
+                            : Object.entries(resourceStatusLabels)
                         ).map(([value, label]) => (
                           <option key={value} value={value}>
                             {label}
@@ -2267,6 +2291,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "备注",
                     "状态",
                     "灵枢平台状态",
+                    "隐藏",
                   ],
                   [
                     "Atlas-示例-01",
@@ -2278,6 +2303,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "请替换示例内容",
                     "可申请",
                     "",
+                    "否",
                   ],
                 ])
               }
@@ -2362,7 +2388,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           )}
           <p className="import-help">
             {importMode === "add"
-              ? "必填：名称、类型、IP、使用方式。占用模式和状态默认独占、可申请；灵枢平台状态默认“通过灵枢平台使用”。"
+              ? "必填：名称、类型、IP、使用方式。状态可填可申请、维护中、不可用；隐藏填是或否，默认公开显示。占用模式默认独占；灵枢平台状态默认“通过灵枢平台使用”。"
               : "按IP匹配已有服务器，填写要更新的列；空白单元格保留原值，未匹配IP将阻止整批更新。"}
           </p>
           <textarea
@@ -2404,6 +2430,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       <th>备注</th>
                       <th>状态</th>
                       <th>灵枢平台状态</th>
+                      <th>隐藏</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2440,12 +2467,11 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <td>{r.note ?? "保留原值"}</td>
                         <td>
                           {r.status
-                            ? r.status === "maintenance"
-                              ? "维护中"
-                              : "可申请"
+                            ? resourceStatusLabels[r.status as Resource["status"]]
                             : "保留原值"}
                         </td>
                         <td>{r.lingshuStatus ? lingshuStatusLabels[r.lingshuStatus as keyof typeof lingshuStatusLabels] : importMode === "update" ? "保留原值" : r.accessMode === "lingshu" ? lingshuStatusLabels.platform : "—"}</td>
+                        <td>{r.hidden === undefined ? importMode === "update" ? "保留原值" : "否" : r.hidden ? "是" : "否"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -3190,7 +3216,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         <Modal
           wide
           title={detail.name}
-          sub={`${detail.type} · ${detail.accessMode === "bare" ? "通过裸机使用" : resourceLingshuLabel(detail)} · ${resourceSharingMode(detail) === "shared" ? "共享" : "独占"} · ${detail.location || "未填写位置"}`}
+          sub={`${detail.type} · ${detail.accessMode === "bare" ? "通过裸机使用" : resourceLingshuLabel(detail)} · ${resourceSharingMode(detail) === "shared" ? "共享" : "独占"} · ${detail.location || "未填写位置"} · ${resourceStatusLabels[detail.status]}${detail.hidden ? " · 已隐藏，仅管理员可见" : ""}`}
           onClose={() => setDetail(null)}
         >
           <div className="detail-top">
@@ -3210,7 +3236,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               复制 IP
             </button>
             <span className="spacer" />
-            {!detail.deleted && (
+            {!detail.deleted && detail.status === "available" && (
               <button
                 className="button primary small"
                 onClick={() => {
@@ -3251,7 +3277,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     const r = s.requests.find(r => r.id === b.requestId);
                     if (r) openPartialCancel(r, b.resourceId);
                   }}>取消部分时段</button>}
-                  <button
+                  {s.requests.some(r => r.id === b.requestId) && <button
                     className="text-button"
                     onClick={() => {
                       const r = s.requests.find((r) => r.id === b.requestId);
@@ -3262,7 +3288,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     }}
                   >
                     申请详情
-                  </button>
+                  </button>}
                 </div>
               ))}
             {!s.bookings.some(

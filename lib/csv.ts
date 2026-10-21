@@ -39,6 +39,7 @@ export type ResourceImportRow = {
   location?: string;
   note?: string;
   status?: string;
+  hidden?: boolean;
 };
 export function resourceTableRows(
   input: string[][],
@@ -57,6 +58,7 @@ export function resourceTableRows(
     location: ["位置", "机房", "location"],
     note: ["备注", "note"],
     status: ["状态", "资源状态", "status"],
+    hidden: ["隐藏", "是否隐藏", "仅管理员可见", "hidden"],
   };
   const header = table[0].map((h) => h.replace(/^\uFEFF/, "").trim());
   const index = Object.fromEntries(
@@ -91,13 +93,15 @@ export function resourceTableRows(
     available: "available",
     维护中: "maintenance",
     maintenance: "maintenance",
+    不可用: "unavailable",
+    unavailable: "unavailable",
   };
   const lingshu: Record<string, string> = Object.fromEntries(
     Object.entries(lingshuStatusLabels).flatMap(([key, label]) => [[key, key], [label, key]]),
   );
   return table.slice(1).map((row, i) => {
     const get = (key: string) => (row[index[key]] ?? "").trim();
-    const out: Record<string, string> = { ip: get("ip") };
+    const out: Record<string, string | boolean> = { ip: get("ip") };
     if (!out.ip) throw new Error(`第${i + 2}行：IP不能为空`);
     for (const key of Object.keys(aliases).filter((k) => k !== "ip")) {
       const value = get(key);
@@ -122,8 +126,13 @@ export function resourceTableRows(
           continue;
         }
         if (value && !status[value])
-          throw new Error(`第${i + 2}行：状态应为“可申请”或“维护中”`);
+          throw new Error(`第${i + 2}行：状态应为“可申请”、“维护中”或“不可用”`);
         out[key] = status[value] ?? "available";
+      } else if (key === "hidden") {
+        if (!value && mode === "add") continue;
+        if (["是", "隐藏", "仅管理员", "true", "1"].includes(value)) out.hidden = true;
+        else if (["否", "公开", "显示", "false", "0"].includes(value)) out.hidden = false;
+        else throw new Error(`第${i + 2}行：隐藏应填写“是”或“否”`);
       } else out[key] = value;
     }
     if (out.accessMode === "bare" && out.lingshuStatus) throw new Error(`第${i + 2}行：裸机不能填写灵枢平台状态`);

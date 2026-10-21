@@ -223,6 +223,7 @@ try {
   await page.getByLabel("全选当前结果").check();
   await page.getByRole("button", { name: "批量修改", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.documentElement.scrollWidth === window.innerWidth);
   assert.equal(
     await page.evaluate(() => document.documentElement.scrollWidth),
     390,

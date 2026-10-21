@@ -11,7 +11,8 @@ export type Resource = {
   sharingMode: SharingMode;
   location: string;
   note: string;
-  status: "available" | "maintenance";
+  status: "available" | "maintenance" | "unavailable";
+  hidden?: boolean;
   deleted: boolean;
   createdAt: string;
   updatedAt: string;

@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { lingshuStatusLabels, platformGroup, PLATFORM_GROUP_ID, resourceLingshuStatus } from "./lingshu";
 import { partialCancellationPlan } from "./booking-adjustment";
+import { resourceStatusLabels, visibleResourceState } from "./resource-policy";
 export class DomainError extends Error {
   constructor(
     public status: number,
@@ -209,6 +210,8 @@ export function mutate(
   }
   function owned(r: UsageRequest) {
     if (!admin && r.groupId !== actor.groupId) fail("只能操作本组申请", 403);
+    if (!admin && r.resourceIds.some(id => s.resources.some(resource => resource.id === id && resource.hidden)))
+      fail("该申请需要由管理员处理", 403);
   }
   function resourceInput(value: unknown, previous?: Resource): Resource {
     const v = value as Record<string, unknown>;
@@ -221,8 +224,9 @@ export function mutate(
     if (v.accessMode === "lingshu" && !Object.hasOwn(lingshuStatusLabels, String(lingshuStatus)))
       fail("灵枢平台状态不正确");
     if (v.accessMode === "bare" && v.lingshuStatus) fail("灵枢平台状态仅适用于使用方式为灵枢平台的服务器");
-    if (!["available", "maintenance"].includes(v.status as string))
+    if (!Object.hasOwn(resourceStatusLabels, String(v.status)))
       fail("资源状态不正确");
+    if (v.hidden !== undefined && typeof v.hidden !== "boolean") fail("隐藏设置应为是或否");
     const sharingMode =
       v.sharingMode === undefined
         ? resourceSharingMode(previous)
@@ -238,6 +242,7 @@ export function mutate(
       ...(v.accessMode === "lingshu" ? { lingshuStatus: lingshuStatus as Resource["lingshuStatus"] } : {}),
       sharingMode: sharingMode as Resource["sharingMode"],
       status: v.status as Resource["status"],
+      hidden: v.hidden === undefined ? previous?.hidden ?? false : v.hidden,
       location: text(v.location ?? "", "位置", 100, false),
       note: text(v.note ?? "", "备注", 1000, false),
       deleted: false,
@@ -268,13 +273,13 @@ export function mutate(
         );
     }
     if (
-      r.status === "maintenance" &&
+      r.status !== "available" &&
       s.bookings.some(
         (b) =>
           b.resourceId === r.id && b.status === "scheduled" && b.endAt > now,
       )
     )
-      fail("该服务器还有有效预约，请先取消或释放预约再维护", 409);
+      fail(`该服务器还有有效预约，请先取消或释放预约再设为${resourceStatusLabels[r.status]}`, 409);
   }
   const editableFields = [
     "name",
@@ -285,6 +290,7 @@ export function mutate(
     "location",
     "note",
     "status",
+    "hidden",
   ];
   function checkedChanges(value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -613,8 +619,9 @@ export function mutate(
       const resourceIds = ids(action.resourceIds, "服务器");
       for (const id of resourceIds) {
         const r = s.resources.find((r) => r.id === id && !r.deleted);
-        if (!r || r.status !== "available")
-          fail("部分服务器已删除或维护中，请重新选择", 409);
+        if (!r || (r.hidden && !admin)) fail("部分服务器不存在或不可见，请重新选择", 409);
+        if (r.status !== "available")
+          fail("部分服务器维护中或不可用，请重新选择", 409);
       }
       const startAt = new Date(
         text(action.startAt, "开始时间", 50),
@@ -666,7 +673,7 @@ export function mutate(
         for (const id of r.resourceIds) {
           const resource = s.resources.find((x) => x.id === id && !x.deleted);
           if (!resource || resource.status !== "available")
-            fail("服务器已删除或维护中", 409);
+            fail("服务器已删除、维护中或不可用", 409);
         }
         const conflicts = approvalConflicts(s, r);
         if (conflicts.length) {
@@ -834,6 +841,7 @@ export function serializePublic(
   now: string,
   adminConfigured: boolean,
 ) {
+  s = visibleResourceState(s, actor);
   return {
     ...s,
     invitations: actor.role === "admin" ? s.invitations : [],

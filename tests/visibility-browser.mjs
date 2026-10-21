@@ -1,0 +1,106 @@
+import { chromium } from "playwright";
+import ExcelJS from "exceljs";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+const base = process.env.BASE_URL ?? "http://127.0.0.1:5173";
+const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
+const browser = await chromium.launch({ headless: true, channel: "chromium", args: ["--no-sandbox"],
+  ...(proxy && !/^http:\/\/(127\.0\.0\.1|localhost)/.test(base) ? { proxy: { server: proxy } } : {}),
+});
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1050 } });
+  const errors = [];
+  page.on("pageerror", e => errors.push(e.message));
+  await page.goto(base + "/demo", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "服务器资源", exact: true }).click();
+  await page.getByRole("button", { name: "添加服务器", exact: true }).click();
+  let d = page.getByRole("dialog");
+  await d.getByLabel("服务器名称").fill("QA隐藏-A");
+  await d.getByLabel("服务器类型").fill("QA隐藏8卡");
+  await d.getByLabel("IP 地址").fill("198.51.100.181");
+  await d.getByLabel("资源状态", { exact: true }).selectOption("unavailable");
+  await d.getByRole("button", { name: "保存服务器", exact: true }).click();
+  await d.waitFor({ state: "hidden" });
+  const search = page.getByLabel("搜索资源", { exact: true });
+  await search.fill("QA隐藏-");
+  const rows = page.locator(".resource-table tbody tr");
+  assert.equal(await rows.count(), 1);
+  assert.match(await rows.innerText(), /不可用/);
+  await page.getByLabel("演示角色").selectOption("contact");
+  assert.equal(await rows.count(), 1);
+  assert.equal(await rows.getByRole("button", { name: "申请", exact: true }).count(), 0);
+  await page.getByRole("button", { name: "申请资源", exact: true }).click();
+  d = page.getByRole("dialog");
+  assert.equal(await d.getByText("QA隐藏-A", { exact: true }).count(), 0);
+  await d.getByLabel("关闭", { exact: true }).click();
+  await page.getByLabel("演示角色").selectOption("admin");
+  await page.getByRole("button", { name: "编辑 QA隐藏-A", exact: true }).click();
+  d = page.getByRole("dialog");
+  await d.getByLabel("资源可见性", { exact: true }).selectOption("true");
+  await d.getByRole("button", { name: "保存服务器", exact: true }).click();
+  await d.waitFor({ state: "hidden" });
+  assert.match(await rows.innerText(), /已隐藏 · 仅管理员可见/);
+  await page.getByLabel("状态筛选").selectOption("hidden");
+  assert.equal(await rows.count(), 1);
+  await page.getByRole("button", { name: "批量导入", exact: true }).click();
+  d = page.getByRole("dialog");
+  const workbook = new ExcelJS.Workbook();
+  workbook.addWorksheet("资源").addRows([
+    ["名称", "类型", "IP", "使用方式", "状态", "隐藏"],
+    ["QA隐藏-B", "QA隐藏8卡", "198.51.100.182", "裸机", "不可用", "是"],
+  ]);
+  await d.getByLabel("上传资源表格").setInputFiles({ name: "隐藏服务器.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer: Buffer.from(await workbook.xlsx.writeBuffer()) });
+  assert.match(await d.locator(".import-preview").innerText(), /不可用/);
+  await d.getByRole("button", { name: "确认导入", exact: true }).click();
+  await d.waitFor({ state: "hidden" });
+  assert.equal(await rows.count(), 2);
+  for (const role of ["contact", "visitor"]) {
+    await page.getByLabel("演示角色").selectOption(role);
+    assert.equal(await rows.count(), 0);
+    assert.equal(await page.getByRole("option", { name: "已隐藏（仅管理员可见）", exact: true }).count(), 0);
+    await page.getByRole("button", { name: "使用排期", exact: true }).click();
+    assert(!((await page.locator("main").innerText()).includes("QA隐藏-")));
+    await page.getByRole("button", { name: "变更历史", exact: true }).click();
+    assert(!((await page.locator("main").innerText()).includes("QA隐藏-")));
+    await page.getByRole("button", { name: "服务器资源", exact: true }).click();
+    await search.fill("QA隐藏-");
+    assert.equal(await rows.count(), 0);
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "导出表格", exact: true }).click();
+    const csv = await readFile(await (await downloadPromise).path(), "utf8");
+    assert(!csv.includes("198.51.100.181"));
+    assert(!csv.includes("198.51.100.182"));
+  }
+  await page.getByLabel("演示角色").selectOption("admin");
+  assert.equal(await rows.count(), 2);
+  await page.getByLabel("状态筛选").selectOption("unavailable");
+  assert.equal(await rows.count(), 2);
+  await page.getByLabel("全选当前结果").check();
+  await page.getByRole("button", { name: "批量修改", exact: true }).click();
+  d = page.getByRole("dialog");
+  await d.getByLabel("修改资源状态", { exact: true }).check();
+  await d.getByLabel("批量资源状态", { exact: true }).selectOption("available");
+  await d.getByLabel("修改资源可见性", { exact: true }).check();
+  await d.getByLabel("批量资源可见性", { exact: true }).selectOption("false");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.documentElement.scrollWidth === window.innerWidth);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390);
+  assert(await d.evaluate(e => e.scrollWidth <= e.clientWidth + 1));
+  await page.screenshot({ path: "outputs/visibility-mobile.png", fullPage: true });
+  await d.getByRole("button", { name: "确认批量修改", exact: true }).click();
+  await d.waitFor({ state: "hidden" });
+  await page.getByLabel("状态筛选").selectOption("");
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await page.getByLabel("演示角色").selectOption("contact");
+  assert.equal(await rows.count(), 2);
+  assert.equal(await rows.getByRole("button", { name: "申请", exact: true }).count(), 2);
+  await page.getByLabel("演示角色").selectOption("admin");
+  await page.getByRole("button", { name: "编辑 QA隐藏-A", exact: true }).click();
+  d = page.getByRole("dialog");
+  await d.getByLabel("资源状态", { exact: true }).selectOption("unavailable");
+  await d.getByLabel("资源可见性", { exact: true }).selectOption("true");
+  await page.screenshot({ path: "outputs/visibility-desktop.png", fullPage: true });
+  await d.getByLabel("关闭", { exact: true }).click();
+  assert.deepEqual(errors, []);
+  console.log("PASS: unavailable editing, blocked request picker, hidden admin marker/filter, Excel visibility import, contact/visitor list/timeline/history/export privacy, bulk restoration and mobile form");
+} finally { await browser.close(); }

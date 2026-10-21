@@ -159,6 +159,16 @@ test("real D1 persistence, atomic rollback and concurrent writers", async () => 
     const staleCancel = mutate(invited, admin, { type: "request.cancel", id: booking.requestId }, now);
     await assert.rejects(saveState(db, invited, staleCancel), /数据刚刚发生变化/);
     assert.deepEqual(await loadState(db), persisted);
+    const privateResource = mutate(persisted, admin, {
+      type: "resource.bulkUpdate", ids: [persisted.resources[1].id], changes: { status: "unavailable", hidden: true },
+    }, now);
+    await saveState(db, persisted, privateResource);
+    const privateLoaded = await loadState(db);
+    assert.equal(privateLoaded.resources.find(r => r.id === persisted.resources[1].id)?.status, "unavailable");
+    assert.equal(privateLoaded.resources.find(r => r.id === persisted.resources[1].id)?.hidden, true);
+    const stalePublic = mutate(persisted, admin, { type: "resource.bulkUpdate", ids: [persisted.resources[1].id], changes: { hidden: false } }, now);
+    await assert.rejects(saveState(db, persisted, stalePublic), /数据刚刚发生变化/);
+    assert.deepEqual(await loadState(db), privateLoaded);
   } finally {
     await mf.dispose();
   }
