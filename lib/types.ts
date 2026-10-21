@@ -73,6 +73,14 @@ export type Audit = {
   before: string;
   after: string;
 };
+export type SiteSettings = { announcement: string; authorSignature: string };
+export type AdminInvitation = {
+  id: string;
+  email: string;
+  displayName: string;
+  status: "pending" | "accepted" | "cancelled";
+  createdAt: string;
+};
 export type State = {
   revision: number;
   resources: Resource[];
@@ -81,6 +89,8 @@ export type State = {
   requests: UsageRequest[];
   bookings: Booking[];
   audits: Audit[];
+  settings: SiteSettings;
+  invitations: AdminInvitation[];
 };
 export type Actor = {
   userId: string;

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { Miniflare } from "miniflare";
 import { loadState, saveState } from "../lib/repository";
 import { mutate } from "../lib/domain";
@@ -32,10 +32,8 @@ test("real D1 persistence, atomic rollback and concurrent writers", async () => 
   });
   try {
     const db = (await mf.getD1Database("DB")) as unknown as D1Database;
-    const sql = await readFile(
-      "drizzle/0000_rainy_serpent_society.sql",
-      "utf8",
-    );
+    const sql = (await Promise.all((await readdir("drizzle")).filter(name => name.endsWith(".sql")).sort()
+      .map(name => readFile(`drizzle/${name}`, "utf8")))).join("\n--> statement-breakpoint\n");
     await db.batch(
       sql
         .split("--> statement-breakpoint")
@@ -135,6 +133,16 @@ test("real D1 persistence, atomic rollback and concurrent writers", async () => 
       final.requests.filter((r) => r.status === "pending").length,
       1,
     );
+    const published = mutate(final, admin, { type: "site.settings", announcement: "D1持久化公告", authorSignature: "测试作者" }, now);
+    await saveState(db, final, published);
+    const invited = mutate(published, admin, { type: "admin.invite", email: "next@example.test" }, now);
+    await saveState(db, published, invited);
+    assert.deepEqual(await loadState(db), { ...invited,
+      audits: [...invited.audits].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id)),
+    });
+    const staleSettings = mutate(final, admin, { type: "site.settings", announcement: "不应写入" }, now);
+    await assert.rejects(saveState(db, final, staleSettings), /数据刚刚发生变化/);
+    assert.equal((await loadState(db)).settings.announcement, "D1持久化公告");
   } finally {
     await mf.dispose();
   }
@@ -149,10 +157,7 @@ test("legacy resource payloads default to exclusive; shared bookings persist for
   });
   try {
     const db = (await mf.getD1Database("DB")) as unknown as D1Database;
-    const sql = await readFile(
-      "drizzle/0000_rainy_serpent_society.sql",
-      "utf8",
-    );
+    const sql = await readFile("drizzle/0000_rainy_serpent_society.sql", "utf8");
     await db.batch(
       sql
         .split("--> statement-breakpoint")
@@ -172,6 +177,10 @@ test("legacy resource payloads default to exclusive; shared bookings persist for
         }),
       )
       .run();
+    const upgrade = (await Promise.all((await readdir("drizzle"))
+      .filter(name => name.endsWith(".sql") && !name.startsWith("0000_")).sort()
+      .map(name => readFile(`drizzle/${name}`, "utf8")))).join("\n--> statement-breakpoint\n");
+    await db.batch(upgrade.split("--> statement-breakpoint").filter(x => x.trim()).map(x => db.prepare(x)));
     let s = await loadState(db);
     assert.equal(s.resources[0].sharingMode, "exclusive");
     let next = mutate(

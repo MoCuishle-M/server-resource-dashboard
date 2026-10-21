@@ -7,11 +7,14 @@ const tables = [
   "requests",
   "bookings",
   "audits",
+  "invitations",
 ] as const;
+const tableName = (name: typeof tables[number]) => name === "invitations" ? "admin_invitations" : name;
 export async function loadState(db: D1Database): Promise<State> {
   const results = await db.batch([
     db.prepare("SELECT revision FROM meta WHERE id='main'"),
-    ...tables.map((t) => db.prepare(`SELECT payload FROM ${t}`)),
+    ...tables.map((t) => db.prepare(`SELECT payload FROM ${tableName(t)}`)),
+    db.prepare("SELECT payload FROM site_settings WHERE id='main'"),
   ]);
   const s = emptyState();
   s.revision =
@@ -21,6 +24,8 @@ export async function loadState(db: D1Database): Promise<State> {
     if (rows.length || t !== "groups")
       (s[t] as unknown[]) = rows.map((r) => JSON.parse(r.payload));
   });
+  const settingsRow = results[tables.length + 1].results[0] as { payload: string } | undefined;
+  if (settingsRow) s.settings = { ...s.settings, ...JSON.parse(settingsRow.payload) };
   s.resources = s.resources.map((r) => ({
     ...r,
     sharingMode: r.sharingMode ?? "exclusive",
@@ -45,12 +50,14 @@ export async function saveState(db: D1Database, before: State, after: State) {
         statements.push(
           db
             .prepare(
-              `INSERT INTO ${t}(id,payload) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`,
+              `INSERT INTO ${tableName(t)}(id,payload) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`,
             )
             .bind(row.id, data),
         );
     }
   }
+  if (JSON.stringify(before.settings) !== JSON.stringify(after.settings))
+    statements.push(db.prepare("INSERT INTO site_settings(id,payload) VALUES('main',?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload").bind(JSON.stringify(after.settings)));
   statements.push(
     db
       .prepare(

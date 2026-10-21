@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   Activity,
+  Megaphone,
   ArrowDownToLine,
   ArrowRight,
   ArrowUpRight,
@@ -63,6 +64,8 @@ import ScheduleTimeline from "./schedule-timeline";
 import type { TimelineRange } from "@/lib/schedule";
 import { resourceSearch } from "@/lib/resource-search";
 import ResourceTypeFilter from "./resource-type-filter";
+import FontSizeControl from "./font-size-control";
+import AdminSettings from "./admin-settings";
 import { downloadCSV, importRows } from "@/lib/csv";
 import {
   readResourceWorkbook,
@@ -86,7 +89,8 @@ type View =
   | "schedule"
   | "requests"
   | "groups"
-  | "history";
+  | "history"
+  | "settings";
 const nav = [
   { id: "overview", label: "资源总览", icon: LayoutDashboard },
   { id: "resources", label: "服务器资源", icon: Server },
@@ -94,6 +98,7 @@ const nav = [
   { id: "requests", label: "申请与审批", icon: ClipboardList },
   { id: "groups", label: "团队与接口人", icon: Users },
   { id: "history", label: "变更历史", icon: History },
+  { id: "settings", label: "网站设置", icon: Settings2 },
 ] as const;
 const titles: Record<View, { title: string; sub: string }> = {
   overview: { title: "资源总览", sub: "让每一份算力，都有清晰的去向。" },
@@ -108,6 +113,7 @@ const titles: Record<View, { title: string; sub: string }> = {
   },
   groups: { title: "团队与接口人", sub: "10个团队，一个共享的资源空间。" },
   history: { title: "变更历史", sub: "每次分配、调整和释放，都有迹可循。" },
+  settings: { title: "网站设置", sub: "维护公开信息与管理员权限。" },
 };
 const fmt = (s: string, withDate = true) =>
   s
@@ -357,6 +363,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     employeeId: "",
   };
   const admin = actor.role === "admin";
+  useEffect(() => {
+    if (!loading && !admin && view === "settings") setView("overview");
+  }, [admin, loading, view]);
   const canApply = admin || actor.role === "contact";
   const resources = s?.resources.filter((r) => !r.deleted) ?? [],
     current = s ? activeBookings(s, clock) : [];
@@ -725,7 +734,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           工作空间 <span>共享资源</span>
         </div>
         <nav>
-          {nav.map((n) => (
+          {nav.filter(n => n.id !== "settings" || admin).map((n) => (
             <button
               key={n.id}
               aria-label={n.label}
@@ -859,6 +868,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               <p>{titles[view].sub}</p>
             </div>
             <div className="heading-actions">
+              <FontSizeControl />
               <span className="date-chip">
                 <CalendarDays size={15} />
                 {chinaDate()}
@@ -895,6 +905,12 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           ) : (
             s && (
               <>
+                <section className="announcement-bar" aria-label="公告栏">
+                  <Megaphone size={20} />
+                  <div><h2>公告栏</h2><p>{s.settings.announcement || "暂无公告"}</p></div>
+                  {admin && <button className="text-button" onClick={() => navigate("settings")}>编辑公告与签名</button>}
+                </section>
+                {view === "settings" && admin && <AdminSettings state={s} busy={busy} onAction={run} />}
                 {view === "overview" && (
                   <>
                     <section className="kpi-grid">
@@ -1831,6 +1847,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               </>
             )
           )}
+          {s && <section className="author-signature" aria-label="作者签名栏">
+            <div><span>作者签名</span><p>{s.settings.authorSignature || "待管理员填写"}</p></div>
+            {admin && <button className="text-button" onClick={() => navigate("settings")}>编辑签名</button>}
+          </section>}
           <footer className="page-footer">
             <span>
               算力资源台 <span> / </span> SERVER RESOURCE CONSOLE

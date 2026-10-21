@@ -39,6 +39,8 @@ export function emptyState(): State {
     requests: [],
     bookings: [],
     audits: [],
+    settings: { announcement: "", authorSignature: "" },
+    invitations: [],
   };
 }
 export function overlaps(
@@ -328,6 +330,57 @@ export function mutate(
       fail("服务器名称重复");
   }
   switch (action.type) {
+    case "site.settings": {
+      needAdmin();
+      const before = { ...s.settings };
+      s.settings = {
+        announcement: text(action.announcement ?? "", "公告内容", 4000, false),
+        authorSignature: text(action.authorSignature ?? "", "作者签名", 200, false),
+      };
+      audit("修改网站信息", "settings", "main", "更新公告栏与作者签名", before, s.settings);
+      break;
+    }
+    case "admin.invite": {
+      needAdmin();
+      const email = text(action.email, "登录邮箱", 254).toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail("请输入有效的登录邮箱");
+      const displayName = text(action.displayName ?? "", "管理员姓名", 50, false);
+      const account = s.accounts.find(a => a.email.toLowerCase() === email && a.userId);
+      if (account?.role === "admin" && account.status === "approved") fail("该账号已经是管理员");
+      if (s.invitations.some(i => i.email === email && i.status === "pending")) fail("该邮箱已有待接受的管理员邀请");
+      if (account) {
+        const before = { ...account };
+        account.role = "admin";
+        account.status = "approved";
+        if (displayName) account.displayName = displayName;
+        audit("新增管理员", "account", account.id, `授予 ${account.displayName} 管理员权限`, before, account);
+      } else {
+        const invitation = { id: crypto.randomUUID(), email, displayName, status: "pending" as const, createdAt: now };
+        s.invitations.push(invitation);
+        audit("邀请管理员", "account", invitation.id, `邀请 ${displayName || email} 成为管理员`, null, invitation);
+      }
+      break;
+    }
+    case "admin.cancelInvitation": {
+      needAdmin();
+      const invitation = s.invitations.find(i => i.id === action.id && i.status === "pending");
+      if (!invitation) fail("待接受的邀请不存在", 404);
+      const before = { ...invitation };
+      invitation.status = "cancelled";
+      audit("取消管理员邀请", "account", invitation.id, "取消管理员邀请", before, invitation);
+      break;
+    }
+    case "admin.revoke": {
+      needAdmin();
+      const account = s.accounts.find(a => a.id === action.id && a.role === "admin" && a.status === "approved");
+      if (!account) fail("管理员账号不存在", 404);
+      if (s.accounts.filter(a => a.role === "admin" && a.status === "approved").length <= 1) fail("至少保留一位管理员");
+      if (account.userId === actor.userId) fail("不能撤销自己的管理员权限");
+      const before = { ...account };
+      account.status = "rejected";
+      audit("撤销管理员权限", "account", account.id, `撤销 ${account.displayName} 的管理员权限`, before, account);
+      break;
+    }
     case "resource.save": {
       needAdmin();
       const existing = action.id
@@ -468,6 +521,7 @@ export function mutate(
       const employeeId = text(action.employeeId, "工号", 50);
       const displayName = text(action.displayName, "姓名", 50);
       const prev = s.accounts.find((a) => a.userId === actor.userId);
+      if (prev?.role === "admin" && prev.status !== "approved") fail("管理员身份已撤销，请联系现有管理员调整权限");
       if (prev?.status === "approved") fail("已认证账号请联系管理员调整权限");
       if (prev?.status === "pending") fail("接口人认证正在审核中");
       const a = {
@@ -496,7 +550,7 @@ export function mutate(
     case "account.review": {
       needAdmin();
       const a = s.accounts.find((a) => a.id === action.id);
-      if (!a || a.status !== "pending") fail("认证申请已被处理或不存在", 409);
+      if (!a || a.role !== "contact" || a.status !== "pending") fail("认证申请已被处理或不存在", 409);
       const before = { ...a };
       if (typeof action.approve !== "boolean") fail("审核结果不正确");
       if (
@@ -735,6 +789,7 @@ export function serializePublic(
 ) {
   return {
     ...s,
+    invitations: actor.role === "admin" ? s.invitations : [],
     accounts:
       actor.role === "admin"
         ? s.accounts

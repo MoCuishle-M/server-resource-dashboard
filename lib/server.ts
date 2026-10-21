@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
-import { emptyState, DomainError, mutate, serializePublic } from "./domain";
+import { DomainError, mutate, serializePublic } from "./domain";
+import { enrollAdmin } from "./admin-enrollment";
 import { loadState, saveState } from "./repository";
-import type { Action, Actor, State } from "./types";
+import type { Action, Actor } from "./types";
 export async function context() {
   if (!env.DB) throw new DomainError(503, "数据库尚未连接，请联系管理员");
   const s = await loadState(env.DB);
@@ -15,53 +16,19 @@ export async function context() {
     groupId: "",
     employeeId: "",
   };
-  const existing = s.accounts.find(
-    (a) => a.userId === actor.userId && a.status === "approved",
-  );
+  const configured = ((env as unknown as Record<string, string>).ADMIN_EMAILS ?? "")
+    .split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
+  const enrolled = enrollAdmin(s, u, configured, new Date().toISOString());
+  if (enrolled !== s) {
+    await saveState(env.DB, s, enrolled);
+    Object.assign(s, enrolled);
+  }
+  const existing = s.accounts.find(a => a.userId === actor.userId && a.status === "approved");
   if (existing) {
     actor.role = existing.role;
     actor.groupId = existing.groupId;
     actor.employeeId = existing.employeeId;
     actor.displayName = existing.displayName;
-  }
-  // Email is used only to authorize first enrollment. Subsequent authorization is keyed by stable Site user ID.
-  const configured = (
-    (env as unknown as Record<string, string>).ADMIN_EMAILS ?? ""
-  )
-    .split(",")
-    .map((x) => x.trim().toLowerCase())
-    .filter(Boolean);
-  if (u && !existing && configured.includes(u.email.toLowerCase())) {
-    const enrolled: State = structuredClone(s);
-    const prev = enrolled.accounts.find((a) => a.userId === u.userId);
-    if (prev) enrolled.accounts.splice(enrolled.accounts.indexOf(prev), 1);
-    enrolled.accounts.push({
-      id: crypto.randomUUID(),
-      userId: u.userId,
-      email: u.email,
-      displayName: u.displayName,
-      employeeId: "",
-      groupId: "",
-      role: "admin",
-      status: "approved",
-      createdAt: new Date().toISOString(),
-    });
-    enrolled.revision++;
-    enrolled.audits.push({
-      id: crypto.randomUUID(),
-      at: new Date().toISOString(),
-      actorId: u.userId,
-      actorName: u.displayName,
-      action: "初始化管理员",
-      entityType: "account",
-      entityId: u.userId,
-      summary: "通过服务器端配置初始化管理员身份",
-      before: "null",
-      after: "null",
-    });
-    await saveState(env.DB, s, enrolled);
-    Object.assign(s, enrolled);
-    actor.role = "admin";
   }
   return {
     s,

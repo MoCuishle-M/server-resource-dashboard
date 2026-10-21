@@ -34,3 +34,11 @@ export const audits = sqliteTable("audits", {
   id: text("id").primaryKey(),
   payload: text("payload").notNull(),
 });
+export const siteSettings = sqliteTable("site_settings", {
+  id: text("id").primaryKey(),
+  payload: text("payload").notNull(),
+});
+export const adminInvitations = sqliteTable("admin_invitations", {
+  id: text("id").primaryKey(),
+  payload: text("payload").notNull(),
+});

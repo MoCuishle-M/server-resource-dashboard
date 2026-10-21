@@ -27,6 +27,11 @@ export function demoState(): PublicState {
   const s = emptyState();
   const at = now.toISOString();
   const today = chinaDate(now);
+  for (const actor of [demoAdmin, demoContact]) s.accounts.push({
+    id: `account-${actor.userId}`, userId: actor.userId, email: actor.email,
+    displayName: actor.displayName, employeeId: actor.employeeId, groupId: actor.groupId,
+    role: actor.role as "admin" | "contact", status: "approved", createdAt: at,
+  });
   s.groups = s.groups.map((g, i) => ({
     ...g,
     name: [
