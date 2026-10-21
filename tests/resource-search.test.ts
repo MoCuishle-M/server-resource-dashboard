@@ -24,6 +24,7 @@ test("text and partial address searches retain phrase spacing and ignore case", 
   assert.deepEqual(matches("950dt  * 8卡"), ["192.0.2.1", "2001:db8::a"]);
   assert.deepEqual(matches("共享训练"), ["192.0.2.1"]);
   assert.deepEqual(matches("192.0.2."), ["192.0.2.1", "192.0.2.11"]);
+  assert(resourceSearch("上海机房")({ ...resources[0], location: "上海机房" }));
 });
 test("empty lists show all resources", () => {
   for (const query of ["", " \t\n", ", ,\n"]) assert.equal(matches(query).length, resources.length);

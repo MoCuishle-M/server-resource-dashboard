@@ -7,8 +7,8 @@ export function resourceSearch(query: string) {
     ? new Set(terms.map(ip => ip.toLowerCase()))
     : null;
   const text = query.trim().toLowerCase();
-  return (resource: Pick<Resource, "name" | "ip" | "type" | "note">) =>
+  return (resource: Pick<Resource, "name" | "ip" | "type" | "note"> & { location?: string }) =>
     !terms.length || (ips
       ? ips.has(resource.ip.toLowerCase())
-      : `${resource.name} ${resource.ip} ${resource.type} ${resource.note}`.toLowerCase().includes(text));
+      : `${resource.name} ${resource.ip} ${resource.type} ${resource.note} ${resource.location ?? ""}`.toLowerCase().includes(text));
 }

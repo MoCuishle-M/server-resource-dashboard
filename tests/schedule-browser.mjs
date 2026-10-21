@@ -33,6 +33,40 @@ try {
   await approve("QA跨周共享", "2026-10-24T00:15", "2026-10-26T03:00", "g2");
   await approve("VLLM组常态占用", "2026-10-22T00:00", "2026-11-01T00:00", "g1");
   await page.getByRole("button", { name: "使用排期", exact: true }).click();
+  const scheduleSearch = page.getByLabel("搜索排期资源");
+  const scheduleRows = page.locator(".schedule-table tbody tr");
+  for (const separator of [" ", ",", "\n", ", \n"]) {
+    await scheduleSearch.fill(`192.0.2.11${separator}192.0.2.21${separator}192.0.2.11`);
+    assert.equal(await scheduleRows.count(), 2);
+  }
+  await page.getByRole("button", { name: "排期类型筛选", exact: true }).click();
+  let typePanel = page.getByRole("dialog", { name: "排期类型筛选", exact: true });
+  await typePanel.getByRole("button", { name: "清空", exact: true }).click();
+  await typePanel.getByRole("checkbox", { name: "Ascend 910B · 8卡", exact: true }).check();
+  await typePanel.getByRole("button", { name: "确定", exact: true }).click();
+  assert.equal(await scheduleRows.count(), 1);
+  assert.match(await scheduleRows.innerText(), /192\.0\.2\.11/);
+  await page.getByRole("button", { name: "排期类型筛选", exact: true }).click();
+  await typePanel.getByRole("button", { name: "清空", exact: true }).click();
+  assert.equal(await scheduleRows.count(), 1); // Draft choices do not affect the timeline.
+  await typePanel.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(await scheduleRows.count(), 1);
+  await page.getByRole("button", { name: "排期类型筛选", exact: true }).click();
+  await typePanel.getByRole("button", { name: "清空", exact: true }).click();
+  await typePanel.getByRole("button", { name: "确定", exact: true }).click();
+  assert.equal(await scheduleRows.count(), 0);
+  await page.getByRole("button", { name: "排期类型筛选", exact: true }).click();
+  await typePanel.getByLabel("全选类型", { exact: true }).check();
+  await typePanel.getByRole("button", { name: "确定", exact: true }).click();
+  assert.equal(await scheduleRows.count(), 2);
+  await page.getByLabel("排期组筛选").selectOption("g1");
+  assert.equal(await scheduleRows.count(), 1);
+  await page.getByLabel("排期组筛选").selectOption("");
+  await scheduleSearch.fill("192.0.2.1");
+  assert.equal(await scheduleRows.count(), 0); // Exact IP must not match .11.
+  await scheduleSearch.fill("北京 · A02机柜");
+  assert.equal(await scheduleRows.count(), 8);
+  await scheduleSearch.fill("");
   const label = page.locator(".schedule-range-label");
   assert.equal(await page.getByRole("button", { name: "一周", exact: true }).getAttribute("aria-pressed"), "true");
   assert.equal(await label.getAttribute("data-start"), "2026-10-18T16:00:00.000Z");
@@ -122,11 +156,16 @@ try {
   await page.getByLabel("搜索排期资源").fill("");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByLabel("网页字号").selectOption("150");
+  await page.getByRole("button", { name: "排期类型筛选", exact: true }).click();
+  typePanel = page.getByRole("dialog", { name: "排期类型筛选", exact: true });
+  const typeBounds = await typePanel.boundingBox();
+  assert(typeBounds.x >= 0 && typeBounds.x + typeBounds.width <= 390);
+  await typePanel.getByRole("button", { name: "取消", exact: true }).click();
   await assertPurposeReadable(persistent, true);
   await assertPurposeReadable(overnight);
   await page.screenshot({ path: "outputs/schedule-readable-text-mobile.png", fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: "outputs/schedule-week.png", fullPage: true });
   assert.deepEqual(errors, []);
-  console.log("PASS: week/day/custom timeline, continuous clipping, shared lanes, filters/presets, readable purpose text at all four font sizes, wrapped long captions and mobile layout");
+  console.log("PASS: timeline type multiselect and draft/empty/all states, batch IP separators/exact matching, combined group filtering, location search, week/day/range, readable purpose text at four font sizes and mobile popup/layout");
 } finally { await browser.close(); }

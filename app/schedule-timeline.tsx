@@ -3,6 +3,8 @@ import { useState } from "react";
 import { ChevronLeft, ChevronRight, Plus, Search, Server, Zap } from "lucide-react";
 import { chinaDate, resourceSharingMode } from "@/lib/domain";
 import { resourceStatusLabels } from "@/lib/resource-policy";
+import { resourceSearch } from "@/lib/resource-search";
+import ResourceTypeFilter from "./resource-type-filter";
 import { calendarRange, customRange, layoutBookings, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
 import type { Booking, Group, Resource } from "@/lib/types";
 
@@ -23,6 +25,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
   const [mode, setMode] = useState<"week" | "day" | "range">("week");
   const [date, setDate] = useState(chinaDate());
   const [search, setSearch] = useState("");
+  const [types, setTypes] = useState<string[] | null>(null);
   const [group, setGroup] = useState("");
   const [applied, setApplied] = useState(() => calendarRange(chinaDate(), "week"));
   const [start, setStart] = useState(() => localInput(applied.startAt));
@@ -32,7 +35,9 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
   const ticks = timelineTicks(range);
   const span = Date.parse(range.endAt) - Date.parse(range.startAt);
   const groupName = (id: string) => groups.find(g => g.id === id)?.name ?? "历史团队";
-  const resourceRows = resources.filter(r => !search || `${r.name} ${r.ip} ${r.type} ${r.location}`.toLowerCase().includes(search.toLowerCase()))
+  const matchesSearch = resourceSearch(search);
+  const resourceTypes = [...new Set(resources.map(r => r.type))];
+  const resourceRows = resources.filter(r => matchesSearch(r) && (types === null || types.includes(r.type)))
     .map(resource => ({ resource, layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range) }))
     .filter(row => !group || row.layout.bars.length > 0);
   const currentPercent = (Date.parse(now) - Date.parse(range.startAt)) / span * 100;
@@ -72,13 +77,15 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
       <p className="schedule-range-label" data-start={range.startAt} data-end={range.endAt}>{fullTime(range.startAt)} — {fullTime(range.endAt)} · 北京时间（结束时刻不含在范围内）</p>
     </div>
     <div className="filters">
-      <div className="search"><Search size={16} /><input aria-label="搜索排期资源" placeholder="搜索名称、IP、类型或位置" value={search} onChange={e => setSearch(e.target.value)} /></div>
+      <div className="search"><Search size={16} /><textarea aria-label="搜索排期资源" aria-describedby="schedule-search-help" placeholder="搜索名称、IP、类型、位置或备注；支持多个IP" rows={2} value={search} onChange={e => setSearch(e.target.value)} /></div>
+      <ResourceTypeFilter types={resourceTypes} selected={types} onChange={setTypes} label="排期类型筛选" />
       <select aria-label="排期组筛选" value={group} onChange={e => setGroup(e.target.value)}>
         <option value="">全部团队</option>
         {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
       </select>
       <span className="muted text-small">{resourceRows.length} 台服务器 · 申请时可选预设时段</span>
     </div>
+    <p id="schedule-search-help" className="resource-search-help">多个IP可用空格、英文逗号或换行分隔，匹配任意一个IP；可叠加服务器类型和团队筛选。</p>
     <div className="table-scroll schedule-scroll" tabIndex={0} aria-label="连续时间排期表，可横向滚动">
       <table className="schedule-table" aria-label="服务器连续时间排期">
         <colgroup><col className="schedule-server-col" /><col /></colgroup>
