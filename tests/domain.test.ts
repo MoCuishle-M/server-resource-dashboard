@@ -77,9 +77,9 @@ function request(
 function approve(s: State, id = s.requests.at(-1)!.id) {
   return apply(s, { type: "request.review", id, approve: true, note: "" });
 }
-test("exactly ten initially unconfigured groups", () => {
+test("ten unconfigured regular groups plus the Lingshu participant", () => {
   const s = emptyState();
-  assert.equal(s.groups.length, 10);
+  assert.equal(s.groups.length, 11);
   assert(s.groups.every((g) => !g.contactName && !g.employeeId));
 });
 test("all five windows, cross-midnight and adjacent intervals", () => {

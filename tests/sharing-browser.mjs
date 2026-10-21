@@ -54,7 +54,7 @@ try {
     await page.getByRole("button", { name: "申请资源", exact: true }).click();
     d = page.getByRole("dialog");
     await d.getByText("QA-Shared-8card", { exact: true }).click();
-    await d.getByLabel("使用团队").selectOption(group);
+    await d.getByLabel("使用者").selectOption(group);
     await d.getByLabel("时间窗口日期").fill(tomorrow);
     await d.getByRole("button", { name: "09:00–12:00", exact: true }).click();
     await d.getByLabel("任务用途").fill("QA共享并行任务-" + index);

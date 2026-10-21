@@ -1,5 +1,6 @@
 import type { State } from "./types";
 import { emptyState, DomainError } from "./domain";
+import { platformGroup, PLATFORM_GROUP_ID } from "./lingshu";
 const tables = [
   "resources",
   "groups",
@@ -24,11 +25,13 @@ export async function loadState(db: D1Database): Promise<State> {
     if (rows.length || t !== "groups")
       (s[t] as unknown[]) = rows.map((r) => JSON.parse(r.payload));
   });
+  if (!s.groups.some(g => g.id === PLATFORM_GROUP_ID)) s.groups.push(platformGroup());
   const settingsRow = results[tables.length + 1].results[0] as { payload: string } | undefined;
   if (settingsRow) s.settings = { ...s.settings, ...JSON.parse(settingsRow.payload) };
   s.resources = s.resources.map((r) => ({
     ...r,
     sharingMode: r.sharingMode ?? "exclusive",
+    ...(r.accessMode === "lingshu" ? { lingshuStatus: r.lingshuStatus ?? "platform" } : {}),
   }));
   s.audits.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
   return s;

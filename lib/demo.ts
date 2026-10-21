@@ -45,7 +45,7 @@ export function demoState(): PublicState {
       "算子开发组",
       "应用研发组",
       "基础设施组",
-    ][i],
+    ][i] ?? "灵枢平台",
     contactName: `演示接口人${i + 1}`,
     employeeId: `DEMO${String(i + 1).padStart(3, "0")}`,
   }));

@@ -52,6 +52,7 @@ export async function downloadResourceTemplate() {
     { header: "位置", key: "location", width: 20 },
     { header: "备注", key: "note", width: 30 },
     { header: "状态", key: "status", width: 14 },
+    { header: "灵枢平台状态", key: "lingshuStatus", width: 38 },
   ];
   sheet.addRow({
     name: "Atlas-示例-01",

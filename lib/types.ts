@@ -1,11 +1,13 @@
 export type Priority = "normal" | "high" | "urgent";
 export type SharingMode = "exclusive" | "shared";
+export type LingshuStatus = "platform" | "ticket" | "pool_platform";
 export type Resource = {
   id: string;
   name: string;
   type: string;
   ip: string;
   accessMode: "bare" | "lingshu";
+  lingshuStatus?: LingshuStatus;
   sharingMode: SharingMode;
   location: string;
   note: string;

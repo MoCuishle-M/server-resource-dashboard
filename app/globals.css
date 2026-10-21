@@ -864,6 +864,7 @@ tbody tr:hover {
   font-size: calc(10px * var(--font-scale, 1.3));
   color: #66717f;
 }
+.lingshu-status { max-width: 220px; white-space: normal; line-height: 1.7; font-size: calc(10px * var(--font-scale, 1.3)); }
 .mono {
   font-family: "DM Sans", ui-monospace, monospace;
   letter-spacing: 0.2px;

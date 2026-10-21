@@ -8,6 +8,7 @@ import type {
   UsageRequest,
   Priority,
 } from "./types";
+import { lingshuStatusLabels, platformGroup, PLATFORM_GROUP_ID, resourceLingshuStatus } from "./lingshu";
 export class DomainError extends Error {
   constructor(
     public status: number,
@@ -29,12 +30,12 @@ export function emptyState(): State {
   return {
     revision: 0,
     resources: [],
-    groups: Array.from({ length: 10 }, (_, i) => ({
+    groups: [...Array.from({ length: 10 }, (_, i) => ({
       id: `g${i + 1}`,
       name: `${String(i + 1).padStart(2, "0")}组`,
       contactName: "",
       employeeId: "",
-    })),
+    })), platformGroup()],
     accounts: [],
     requests: [],
     bookings: [],
@@ -215,6 +216,10 @@ export function mutate(
     if (!ipValid(ip)) fail(`IP地址格式不正确：${ip}`);
     if (!["bare", "lingshu"].includes(v.accessMode as string))
       fail("请选择裸机或灵枢平台");
+    const lingshuStatus = v.lingshuStatus ?? resourceLingshuStatus(previous) ?? "platform";
+    if (v.accessMode === "lingshu" && !Object.hasOwn(lingshuStatusLabels, String(lingshuStatus)))
+      fail("灵枢平台状态不正确");
+    if (v.accessMode === "bare" && v.lingshuStatus) fail("灵枢平台状态仅适用于使用方式为灵枢平台的服务器");
     if (!["available", "maintenance"].includes(v.status as string))
       fail("资源状态不正确");
     const sharingMode =
@@ -229,6 +234,7 @@ export function mutate(
       type: text(v.type, "服务器类型", 80),
       ip,
       accessMode: v.accessMode as Resource["accessMode"],
+      ...(v.accessMode === "lingshu" ? { lingshuStatus: lingshuStatus as Resource["lingshuStatus"] } : {}),
       sharingMode: sharingMode as Resource["sharingMode"],
       status: v.status as Resource["status"],
       location: text(v.location ?? "", "位置", 100, false),
@@ -273,6 +279,7 @@ export function mutate(
     "name",
     "type",
     "accessMode",
+    "lingshuStatus",
     "sharingMode",
     "location",
     "note",
@@ -301,10 +308,9 @@ export function mutate(
               ? previous.ip
               : String(index + 1),
         );
-      const resource = resourceInput(
-        { ...previous, ...values, ip: previous.ip },
-        previous,
-      );
+      const merged = { ...previous, ...values, ip: previous.ip };
+      if (merged.accessMode === "bare" && !("lingshuStatus" in values)) delete merged.lingshuStatus;
+      const resource = resourceInput(merged, previous);
       validateResourceChange(previous, resource);
       return { previous, resource };
     });
@@ -499,6 +505,7 @@ export function mutate(
       const g = s.groups.find((g) => g.id === action.id);
       if (!g) fail("组不存在", 404);
       const before = { ...g };
+      if (g.id === PLATFORM_GROUP_ID && action.name !== "灵枢平台") fail("灵枢平台名称固定，可修改接口人信息");
       g.name = text(action.name, "组名称", 50);
       g.contactName = text(action.contactName ?? "", "接口人姓名", 50, false);
       g.employeeId = text(action.employeeId ?? "", "工号", 50, false);

@@ -42,7 +42,7 @@ test("real D1 persistence, atomic rollback and concurrent writers", async () => 
     );
     const initial = await loadState(db);
     assert.equal(initial.revision, 0);
-    assert.equal(initial.groups.length, 10);
+    assert.equal(initial.groups.length, 11);
     const first = mutate(
       initial,
       admin,
@@ -232,6 +232,26 @@ test("legacy resource payloads default to exclusive; shared bookings persist for
       s.bookings.map((b) => b.groupId),
       ["g1", "g2"],
     );
+    await db.prepare("INSERT INTO resources(id,payload) VALUES(?,?)").bind("legacy-platform", JSON.stringify({
+      ...resource, id: "legacy-platform", name: "旧灵枢资源", ip: "192.0.2.77", accessMode: "lingshu",
+      deleted: false, createdAt: now, updatedAt: now,
+    })).run();
+    await db.prepare("DELETE FROM groups WHERE id='g11'").run();
+    s = await loadState(db);
+    assert.equal(s.groups.length, 11);
+    assert.equal(s.groups.find(g => g.id === "g11")!.name, "灵枢平台");
+    assert.equal(s.resources.find(r => r.id === "legacy-platform")!.lingshuStatus, "platform");
+    next = mutate(s, admin, { type: "group.save", id: "g11", name: "灵枢平台", contactName: "平台接口人", employeeId: "L001" }, now);
+    await saveState(db, s, next);
+    s = await loadState(db);
+    assert.equal(s.groups.find(g => g.id === "g11")!.contactName, "平台接口人");
+    next = mutate(s, admin, { type: "request.create", groupId: "g11", resourceIds: ["legacy"],
+      startAt: "2026-10-20T01:00:00.000Z", endAt: "2026-10-20T04:00:00.000Z", purpose: "平台共享排期", priority: "normal" }, now);
+    await saveState(db, s, next);
+    s = await loadState(db);
+    next = mutate(s, admin, { type: "request.review", id: s.requests.at(-1)!.id, approve: true }, now);
+    await saveState(db, s, next);
+    assert((await loadState(db)).bookings.some(b => b.groupId === "g11"));
   } finally {
     await mf.dispose();
   }

@@ -16,7 +16,7 @@ try {
     await page.getByRole("button", { name: "申请资源", exact: true }).click();
     let d = page.getByRole("dialog");
     await d.getByText("Atlas-910B-01", { exact: true }).click();
-    await d.getByLabel("使用团队").selectOption(group);
+    await d.getByLabel("使用者").selectOption(group);
     await d.getByLabel("开始时间 *", { exact: true }).fill(start);
     await d.getByLabel("结束时间 *", { exact: true }).fill(end);
     await d.getByLabel("任务用途").fill(purpose);

@@ -65,6 +65,7 @@ import type { TimelineRange } from "@/lib/schedule";
 import { resourceSearch } from "@/lib/resource-search";
 import { auditRange, auditTime, filterAudits, type AuditRange } from "@/lib/audit-search";
 import ResourceTypeFilter from "./resource-type-filter";
+import { lingshuStatusLabels, PLATFORM_GROUP_ID, resourceLingshuStatus, resourceLingshuLabel } from "@/lib/lingshu";
 import FontSizeControl from "./font-size-control";
 import AdminSettings from "./admin-settings";
 import { downloadCSV, importRows } from "@/lib/csv";
@@ -112,7 +113,7 @@ const titles: Record<View, { title: string; sub: string }> = {
     title: "申请与审批",
     sub: "从使用诉求到资源分配，每一步都有记录。",
   },
-  groups: { title: "团队与接口人", sub: "10个团队，一个共享的资源空间。" },
+  groups: { title: "团队与接口人", sub: "10个组与灵枢平台，共享透明的资源空间。" },
   history: { title: "变更历史", sub: "每次分配、调整和释放，都有迹可循。" },
   settings: { title: "网站设置", sub: "维护公开信息与管理员权限。" },
 };
@@ -254,6 +255,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const [historyEnd, setHistoryEnd] = useState("");
   const [historyRange, setHistoryRange] = useState<AuditRange>({});
   const [historyError, setHistoryError] = useState("");
+  const [resourceAccessMode, setResourceAccessMode] = useState<Resource["accessMode"]>("bare");
   const [selected, setSelected] = useState<string[]>([]),
     [modal, setModal] = useState<string | null>(null),
     [editResource, setEditResource] = useState<Resource | null>(null),
@@ -396,7 +398,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           ? used.has(r.id)
           : stateFilter === "free"
             ? r.status === "available" && !used.has(r.id)
-            : r.status === "maintenance")) &&
+            : stateFilter.startsWith("lingshu:")
+              ? r.accessMode === "lingshu" && resourceLingshuStatus(r) === stateFilter.slice(8)
+              : r.status === "maintenance")) &&
       (!groupFilter ||
         current.some(
           (b) => b.resourceId === r.id && b.groupId === groupFilter,
@@ -468,7 +472,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   }
   function exportResources() {
     downloadCSV("服务器资源.csv", [
-      ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注"],
+      ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注", "灵枢平台状态"],
       ...filtered.map((r) => [
         r.name,
         r.type,
@@ -477,6 +481,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         resourceSharingMode(r) === "shared" ? "共享" : "独占",
         r.location,
         r.note,
+        resourceLingshuLabel(r),
       ]),
     ]);
   }
@@ -495,6 +500,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     ) {
       setModal(null);
       setEditResource(null);
+      setResourceAccessMode("bare");
     }
   };
   const groupStats =
@@ -583,6 +589,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   <Badge tone={r.accessMode === "lingshu" ? "blue" : "neutral"}>
                     {r.accessMode === "bare" ? "裸机" : "灵枢平台"}
                   </Badge>
+                  {r.accessMode === "lingshu" && <small className="lingshu-status">{resourceLingshuLabel(r)}</small>}
                 </td>
                 <td>
                   <Badge
@@ -675,6 +682,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         aria-label={`编辑 ${r.name}`}
                         onClick={() => {
                           setEditResource(r);
+                          setResourceAccessMode(r.accessMode);
                           setModal("resource");
                         }}
                       >
@@ -711,6 +719,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 className="button primary"
                 onClick={() => {
                   setEditResource(null);
+                  setResourceAccessMode("bare");
                   setModal("resource");
                 }}
               >
@@ -1108,7 +1117,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                           className="text-button"
                           onClick={() => navigate("groups")}
                         >
-                          查看全部10个组 <ArrowRight size={14} />
+                          查看全部使用者 <ArrowRight size={14} />
                         </button>
                       </article>
                     </section>
@@ -1195,6 +1204,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               className="button primary"
                               onClick={() => {
                                 setEditResource(null);
+                                setResourceAccessMode("bare");
                                 setModal("resource");
                               }}
                             >
@@ -1240,6 +1250,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <option value="used">使用中</option>
                         <option value="free">空闲</option>
                         <option value="maintenance">维护中</option>
+                        {Object.entries(lingshuStatusLabels).map(([value, label]) => <option key={value} value={`lingshu:${value}`}>{label}</option>)}
                       </select>
                     </div>
                     <p id="resource-search-help" className="resource-search-help">
@@ -1268,6 +1279,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                             for (const key of [
                               "type",
                               "accessMode",
+                              "lingshuStatus",
                               "sharingMode",
                               "location",
                               "note",
@@ -1276,7 +1288,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               values[key] = rows.every(
                                 (r) => r[key] === rows[0][key],
                               )
-                                ? rows[0][key]
+                                ? rows[0][key] ?? ""
                                 : "";
                             }
                             setBulkValues(values);
@@ -1536,12 +1548,12 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     <div className="group-intro">
                       <span>
                         <Users size={18} />
-                        共10个使用组
+                        10个组 + 灵枢平台
                       </span>
                       <span>
                         <span className="live-dot" />
                         {groupStats.filter((g) => g.count).length}
-                        个组正在使用资源
+                        个使用者正在使用资源
                       </span>
                       <p>
                         累计使用按有效占用时间计算，未来预约与被抢占时段不计入。
@@ -1558,7 +1570,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                             </span>
                             <div>
                               <h2>{g.group.name}</h2>
-                              <small>资源使用组</small>
+                              <small>{g.group.id === PLATFORM_GROUP_ID ? "平台使用方" : "资源使用组"}</small>
                             </div>
                             {admin && (
                               <button
@@ -1919,12 +1931,19 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               <Field label="使用方式 *">
                 <select
                   name="accessMode"
-                  defaultValue={editResource?.accessMode ?? "bare"}
+                  aria-label="使用方式"
+                  value={resourceAccessMode}
+                  onChange={e => setResourceAccessMode(e.target.value as Resource["accessMode"])}
                 >
                   <option value="bare">通过裸机使用</option>
                   <option value="lingshu">通过灵枢平台使用</option>
                 </select>
               </Field>
+              {resourceAccessMode === "lingshu" && <Field label="灵枢平台状态 *">
+                <select name="lingshuStatus" aria-label="灵枢平台状态" defaultValue={resourceLingshuStatus(editResource ?? undefined) ?? "platform"}>
+                  {Object.entries(lingshuStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </Field>}
               <Field label="占用模式 *">
                 <select
                   name="sharingMode"
@@ -2028,6 +2047,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 { key: "name", label: "名称模板" },
                 { key: "type", label: "类型" },
                 { key: "accessMode", label: "使用方式" },
+                { key: "lingshuStatus", label: "灵枢平台状态" },
                 { key: "sharingMode", label: "占用模式" },
                 { key: "location", label: "位置" },
                 { key: "note", label: "备注" },
@@ -2049,7 +2069,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     {field.label}
                   </label>
                   <Field label={field.label}>
-                    {["accessMode", "sharingMode", "status"].includes(
+                    {["accessMode", "lingshuStatus", "sharingMode", "status"].includes(
                       field.key,
                     ) ? (
                       <select
@@ -2070,6 +2090,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               ["bare", "通过裸机使用"],
                               ["lingshu", "通过灵枢平台使用"],
                             ]
+                          : field.key === "lingshuStatus" ? Object.entries(lingshuStatusLabels)
                           : field.key === "sharingMode"
                             ? [
                                 ["exclusive", "独占"],
@@ -2228,6 +2249,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "位置",
                     "备注",
                     "状态",
+                    "灵枢平台状态",
                   ],
                   [
                     "Atlas-示例-01",
@@ -2238,6 +2260,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "机房A",
                     "请替换示例内容",
                     "可申请",
+                    "",
                   ],
                 ])
               }
@@ -2322,7 +2345,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           )}
           <p className="import-help">
             {importMode === "add"
-              ? "必填：名称、类型、IP、使用方式。占用模式和状态默认独占、可申请。"
+              ? "必填：名称、类型、IP、使用方式。占用模式和状态默认独占、可申请；灵枢平台状态默认“通过灵枢平台使用”。"
               : "按IP匹配已有服务器，填写要更新的列；空白单元格保留原值，未匹配IP将阻止整批更新。"}
           </p>
           <textarea
@@ -2363,6 +2386,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       <th>位置</th>
                       <th>备注</th>
                       <th>状态</th>
+                      <th>灵枢平台状态</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2404,6 +2428,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               : "可申请"
                             : "保留原值"}
                         </td>
+                        <td>{r.lingshuStatus ? lingshuStatusLabels[r.lingshuStatus as keyof typeof lingshuStatusLabels] : importMode === "update" ? "保留原值" : r.accessMode === "lingshu" ? lingshuStatusLabels.platform : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2580,8 +2605,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 </span>
               </div>
               <div className="request-fields">
-                <Field label="使用团队 *">
+                <Field label="使用者 *">
                   <select
+                    aria-label="使用者"
                     disabled={!admin}
                     value={requestGroup}
                     onChange={(e) => setRequestGroup(e.target.value)}
@@ -2940,6 +2966,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   name="name"
                   maxLength={50}
                   defaultValue={editGroup.name}
+                  readOnly={editGroup.id === PLATFORM_GROUP_ID}
                 />
               </Field>
               <Field label="接口人姓名">
@@ -3126,7 +3153,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         <Modal
           wide
           title={detail.name}
-          sub={`${detail.type} · ${detail.accessMode === "bare" ? "通过裸机使用" : "通过灵枢平台使用"} · ${resourceSharingMode(detail) === "shared" ? "共享" : "独占"} · ${detail.location || "未填写位置"}`}
+          sub={`${detail.type} · ${detail.accessMode === "bare" ? "通过裸机使用" : resourceLingshuLabel(detail)} · ${resourceSharingMode(detail) === "shared" ? "共享" : "独占"} · ${detail.location || "未填写位置"}`}
           onClose={() => setDetail(null)}
         >
           <div className="detail-top">

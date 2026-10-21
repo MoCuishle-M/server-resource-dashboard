@@ -1,3 +1,4 @@
+import { lingshuStatusLabels } from "./lingshu";
 export function parseTable(input: string) {
   const delimiter = input.split(/\r?\n/)[0]?.includes("\t") ? "\t" : ",";
   const rows: string[][] = [];
@@ -33,6 +34,7 @@ export type ResourceImportRow = {
   name?: string;
   type?: string;
   accessMode?: string;
+  lingshuStatus?: string;
   sharingMode?: string;
   location?: string;
   note?: string;
@@ -50,6 +52,7 @@ export function resourceTableRows(
     type: ["类型", "服务器类型", "type"],
     ip: ["ip", "IP", "IP地址"],
     accessMode: ["使用方式", "accessMode", "使用模式"],
+    lingshuStatus: ["灵枢平台状态", "平台状态", "lingshuStatus"],
     sharingMode: ["占用模式", "共享模式", "sharingMode"],
     location: ["位置", "机房", "location"],
     note: ["备注", "note"],
@@ -89,6 +92,9 @@ export function resourceTableRows(
     维护中: "maintenance",
     maintenance: "maintenance",
   };
+  const lingshu: Record<string, string> = Object.fromEntries(
+    Object.entries(lingshuStatusLabels).flatMap(([key, label]) => [[key, key], [label, key]]),
+  );
   return table.slice(1).map((row, i) => {
     const get = (key: string) => (row[index[key]] ?? "").trim();
     const out: Record<string, string> = { ip: get("ip") };
@@ -100,16 +106,27 @@ export function resourceTableRows(
         if (!access[value])
           throw new Error(`第${i + 2}行：使用方式应为“裸机”或“灵枢平台”`);
         out[key] = access[value];
+      } else if (key === "lingshuStatus") {
+        if (!value) continue;
+        if (!Object.hasOwn(lingshu, value)) throw new Error(`第${i + 2}行：灵枢平台状态不正确`);
+        out[key] = lingshu[value];
       } else if (key === "sharingMode") {
         if (value && !sharing[value])
           throw new Error(`第${i + 2}行：占用模式应为“独占”或“共享”`);
         out[key] = sharing[value] ?? "exclusive";
       } else if (key === "status") {
+        if (value && Object.hasOwn(lingshu, value)) {
+          if (out.lingshuStatus && out.lingshuStatus !== lingshu[value]) throw new Error(`第${i + 2}行：状态与灵枢平台状态不一致`);
+          out.lingshuStatus = lingshu[value];
+          if (mode === "add") out.status = "available";
+          continue;
+        }
         if (value && !status[value])
           throw new Error(`第${i + 2}行：状态应为“可申请”或“维护中”`);
         out[key] = status[value] ?? "available";
       } else out[key] = value;
     }
+    if (out.accessMode === "bare" && out.lingshuStatus) throw new Error(`第${i + 2}行：裸机不能填写灵枢平台状态`);
     if (mode === "update" && Object.keys(out).length === 1)
       throw new Error(`第${i + 2}行：除IP外至少填写一个要更新的字段`);
     return out as ResourceImportRow;
