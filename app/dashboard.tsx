@@ -68,6 +68,7 @@ import ResourceTypeFilter from "./resource-type-filter";
 import { lingshuStatusLabels, PLATFORM_GROUP_ID, resourceLingshuStatus, resourceLingshuLabel } from "@/lib/lingshu";
 import FontSizeControl from "./font-size-control";
 import AdminSettings from "./admin-settings";
+import PartialCancelForm from "./partial-cancel-form";
 import { downloadCSV, importRows } from "@/lib/csv";
 import {
   readResourceWorkbook,
@@ -266,6 +267,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [reviewNote, setReviewNote] = useState(""),
     [preempt, setPreempt] = useState(false),
     [cancelRequest, setCancelRequest] = useState<UsageRequest | null>(null),
+    [partialRequest, setPartialRequest] = useState<UsageRequest | null>(null),
+    [partialResourceId, setPartialResourceId] = useState<string | undefined>(),
     [bulkText, setBulkText] = useState(""),
     [bulkError, setBulkError] = useState(""),
     [deleteIds, setDeleteIds] = useState<string[]>([]);
@@ -386,6 +389,15 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     s?.resources.find((r) => r.id === id)?.name ?? "历史资源";
   const groupName = (id: string) =>
     s?.groups.find((g) => g.id === id)?.name ?? "未分组";
+  const requestBookings = (r: UsageRequest) => (s?.bookings ?? []).filter(b => b.requestId === r.id);
+  const remainingBookings = (r: UsageRequest) => requestBookings(r).filter(b => b.status === "scheduled" && b.endAt > clock);
+  const canAdjust = (r: UsageRequest) => canApply && (admin || actor.groupId === r.groupId) && r.status === "approved" && remainingBookings(r).length > 0;
+  function openPartialCancel(r: UsageRequest, resourceId?: string) {
+    setReview(null);
+    setDetail(null);
+    setPartialResourceId(resourceId);
+    setPartialRequest(r);
+  }
   const types = [...new Set(resources.map((r) => r.type))];
   const matchesSearch = resourceSearch(search);
   const filtered = resources.filter(
@@ -1424,9 +1436,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               </td>
                               <td>
                                 <span className="mono">
+                                  {requestBookings(r).some(b => b.status === "cancelled" || b.status === "preempted") && "原申请："}
                                   {fmt(r.startAt)} → {fmt(r.endAt)}
                                 </span>
                                 <small>{duration(r.startAt, r.endAt)}</small>
+                                {requestBookings(r).some(b => b.status === "cancelled" || b.status === "preempted") && (
+                                  <small className="effective-times">有效排期：{[...new Set(remainingBookings(r).map(b => `${fmt(b.startAt)} → ${fmt(b.endAt)}`))].join("；") || "无剩余时段"}</small>
+                                )}
                               </td>
                               <td>
                                 <Badge
@@ -1491,11 +1507,12 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                                       </button>
                                     </>
                                   )}
-                                  {(admin || actor.groupId === r.groupId) &&
+                                  {canAdjust(r) && <button className="text-button orange-text" onClick={() => openPartialCancel(r)}>取消部分时段</button>}
+                                  {canApply && (admin || actor.groupId === r.groupId) &&
                                     ["pending", "approved"].includes(
                                       r.status,
                                     ) &&
-                                    r.endAt > clock && (
+                                    (r.status === "pending" ? r.endAt > clock : remainingBookings(r).length > 0) && (
                                       <button
                                         className="text-button"
                                         onClick={() => {
@@ -2771,6 +2788,18 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               <div className="notice">审批说明：{review.reviewNote}</div>
             )}
           </div>
+          {review.status !== "pending" && requestBookings(review).length > 0 && (
+            <section aria-label="实际有效排期">
+              <h3 className="detail-section-title">实际有效排期</h3>
+              <div className="booking-list">
+                {requestBookings(review).filter(b => ["scheduled", "released"].includes(b.status)).sort((a, b) => a.startAt.localeCompare(b.startAt)).map(b => (
+                  <div key={b.id}><div><strong>{resourceName(b.resourceId)}</strong><small>{fmt(b.startAt)} → {fmt(b.endAt)}</small></div><Badge tone={b.endAt > clock && b.status === "scheduled" ? "green" : "neutral"}>{b.endAt <= clock || b.status === "released" ? "已结束" : "有效"}</Badge></div>
+                ))}
+                {!requestBookings(review).some(b => ["scheduled", "released"].includes(b.status)) && <p className="muted">暂无有效排期</p>}
+              </div>
+              {canAdjust(review) && <button className="button small" onClick={() => openPartialCancel(review)}>取消部分时段</button>}
+            </section>
+          )}
           {admin && review.status === "pending" && (
             <>
               <div className="review-switch">
@@ -2883,6 +2912,14 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               </button>
             )}
           </div>
+        </Modal>
+      )}
+      {partialRequest && s && (
+        <Modal wide title="取消部分时段" sub="按北京时间填写要释放的时间范围，确认预览后生效；原申请的其他时段继续保留。" onClose={() => setPartialRequest(null)}>
+          <PartialCancelForm request={partialRequest} bookings={s.bookings} resources={s.resources} clock={clock} busy={busy} initialResourceId={partialResourceId}
+            onClose={() => setPartialRequest(null)} onConfirm={async value => {
+              if (await run({ type: "request.cancelPartial", id: partialRequest.id, ...value }, "所选时段已取消，其余排期已保留")) setPartialRequest(null);
+            }} />
         </Modal>
       )}
       {cancelRequest && (
@@ -3210,6 +3247,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       {priorityLabel[b.priority]}
                     </small>
                   </div>
+                  {s.requests.some(r => r.id === b.requestId && canAdjust(r)) && <button className="text-button orange-text" onClick={() => {
+                    const r = s.requests.find(r => r.id === b.requestId);
+                    if (r) openPartialCancel(r, b.resourceId);
+                  }}>取消部分时段</button>}
                   <button
                     className="text-button"
                     onClick={() => {

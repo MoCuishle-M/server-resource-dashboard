@@ -143,6 +143,22 @@ test("real D1 persistence, atomic rollback and concurrent writers", async () => 
     const staleSettings = mutate(final, admin, { type: "site.settings", announcement: "不应写入" }, now);
     await assert.rejects(saveState(db, final, staleSettings), /数据刚刚发生变化/);
     assert.equal((await loadState(db)).settings.announcement, "D1持久化公告");
+    const booking = invited.bookings[0];
+    const partial = mutate(invited, admin, {
+      type: "request.cancelPartial", id: booking.requestId, resourceIds: [booking.resourceId],
+      startAt: new Date(Date.parse(booking.startAt) + 30 * 60000).toISOString(),
+      endAt: new Date(Date.parse(booking.startAt) + 60 * 60000).toISOString(),
+      note: "D1部分取消验证",
+    }, now);
+    await saveState(db, invited, partial);
+    const persisted = await loadState(db);
+    assert.equal(persisted.revision, partial.revision);
+    assert.deepEqual([...persisted.bookings].sort((a, b) => a.id.localeCompare(b.id)), [...partial.bookings].sort((a, b) => a.id.localeCompare(b.id)));
+    assert.equal(persisted.bookings.filter(b => b.status === "scheduled").length, 2);
+    assert.equal(persisted.audits.filter(a => a.action === "取消部分时段").length, 1);
+    const staleCancel = mutate(invited, admin, { type: "request.cancel", id: booking.requestId }, now);
+    await assert.rejects(saveState(db, invited, staleCancel), /数据刚刚发生变化/);
+    assert.deepEqual(await loadState(db), persisted);
   } finally {
     await mf.dispose();
   }

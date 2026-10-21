@@ -77,6 +77,84 @@ function request(
 function approve(s: State, id = s.requests.at(-1)!.id) {
   return apply(s, { type: "request.review", id, approve: true, note: "" });
 }
+const partialRange = { startAt: "2026-10-20T04:00:00.000Z", endAt: "2026-10-20T06:00:00.000Z" };
+function partialAction(s: State, extra: Record<string, unknown> = {}) {
+  return { type: "request.cancelPartial", id: s.requests[0].id, resourceIds: [s.resources[0].id], ...partialRange, note: "临时任务占用12–14点", ...extra };
+}
+test("partial cancellation preserves 9–12 and 14–19; exclusive gap can be booked by another group", () => {
+  const original = approve(request(setup(), "2026-10-20T01:00:00.000Z", "2026-10-20T11:00:00.000Z"));
+  let s = apply(original, partialAction(original), contact);
+  assert.equal(s.requests[0].status, "approved");
+  assert.equal(s.resources[0].sharingMode, "exclusive");
+  assert.deepEqual(s.bookings.filter(b => b.status === "scheduled").map(b => [b.startAt, b.endAt]), [
+    ["2026-10-20T01:00:00.000Z", partialRange.startAt], [partialRange.endAt, "2026-10-20T11:00:00.000Z"],
+  ]);
+  assert.deepEqual([s.bookings[0].startAt, s.bookings[0].endAt, s.bookings[0].status], [partialRange.startAt, partialRange.endAt, "cancelled"]);
+  assert.equal(original.bookings.length, 1);
+  assert.equal(original.bookings[0].status, "scheduled");
+  const audit = s.audits.at(-1)!;
+  assert.equal(audit.action, "取消部分时段");
+  assert.match(audit.summary, /临时任务/);
+  assert.equal(JSON.parse(audit.before).endAt, "2026-10-20T11:00:00.000Z");
+  assert.equal(JSON.parse(audit.after).retained.length, 2);
+  s = approve(request(s, partialRange.startAt, partialRange.endAt, "normal", { ...contact, groupId: "g2" }));
+  assert.deepEqual(currentResourceUsage(s, s.resources[0].id, "2026-10-20T05:00:00.000Z").groupIds, ["g2"]);
+  assert.deepEqual(currentResourceUsage(s, s.resources[0].id, "2026-10-20T07:00:00.000Z").groupIds, ["g1"]);
+  s = request(s, "2026-10-20T03:00:00.000Z", "2026-10-20T05:00:00.000Z");
+  assert.throws(() => approve(s), /冲突/);
+  assert.equal(groupUsage(s, "g1", "2026-10-20T12:00:00.000Z").hours, 8);
+});
+test("ongoing partial cancellation keeps elapsed usage and handles successive cuts and complete release", () => {
+  let s = approve(request(setup(), "2026-10-20T01:00:00.000Z", "2026-10-20T11:00:00.000Z"));
+  const ongoingNow = "2026-10-20T03:00:00.000Z";
+  s = mutate(s, admin, partialAction(s), ongoingNow);
+  assert.equal(groupUsage(s, "g1", ongoingNow).hours, 2);
+  s = mutate(s, admin, partialAction(s, { startAt: "2026-10-20T03:00:00.000Z", endAt: "2026-10-20T08:00:00.000Z" }), ongoingNow);
+  assert.deepEqual(s.bookings.filter(b => b.status === "scheduled").map(b => [b.startAt, b.endAt]), [
+    ["2026-10-20T01:00:00.000Z", ongoingNow], ["2026-10-20T08:00:00.000Z", "2026-10-20T11:00:00.000Z"],
+  ]);
+  assert.equal(s.requests[0].status, "approved");
+  s = mutate(s, admin, partialAction(s, { startAt: "2026-10-20T08:00:00.000Z", endAt: "2026-10-20T11:00:00.000Z" }), ongoingNow);
+  assert.equal(s.requests[0].status, "cancelled");
+  assert.equal(groupUsage(s, "g1", "2026-10-20T12:00:00.000Z").hours, 2);
+});
+test("partial cancellation validates ownership, status, range, reason and resources atomically", () => {
+  const s = approve(request(setup(), "2026-10-20T01:00:00.000Z", "2026-10-20T11:00:00.000Z"));
+  const snapshot = structuredClone(s);
+  for (const who of [visitor, member, { ...contact, groupId: "g2" }])
+    assert.throws(() => apply(s, partialAction(s), who), /登录|本组/);
+  for (const extra of [
+    { note: " " }, { resourceIds: [] }, { resourceIds: ["missing"] },
+    { startAt: "invalid" }, { endAt: partialRange.startAt },
+    { startAt: "2026-10-19T01:00:00.000Z" }, { endAt: "2026-10-21T01:00:00.000Z" },
+  ]) assert.throws(() => apply(s, partialAction(s, extra)));
+  assert.deepEqual(s, snapshot);
+  const pending = request(setup());
+  assert.throws(() => apply(pending, partialAction(pending)), /已批准/);
+  const cut = apply(s, partialAction(s));
+  assert.throws(() => apply(cut, partialAction(cut)), /没有可取消/);
+});
+test("partial cancellation targets selected servers and preserves other teams on shared resources", () => {
+  let s = apply(setup(), { type: "resource.save", resource: { ...row, name: "s2", ip: "192.0.2.2" } });
+  s = apply(s, { type: "resource.save", id: s.resources[0].id, resource: { ...s.resources[0], sharingMode: "shared" } });
+  s = apply(s, { type: "request.create", groupId: "g1", resourceIds: s.resources.map(r => r.id), startAt: "2026-10-20T01:00:00.000Z", endAt: "2026-10-20T11:00:00.000Z", purpose: "两台服务器", priority: "normal" });
+  s = approve(s);
+  s = approve(request(s, partialRange.startAt, partialRange.endAt, "normal", { ...contact, groupId: "g2" }));
+  const other = structuredClone(s.bookings.filter(b => b.requestId === s.requests[1].id || b.resourceId === s.resources[1].id));
+  s = apply(s, partialAction(s));
+  assert.deepEqual(s.bookings.filter(b => b.requestId === s.requests[1].id || b.resourceId === s.resources[1].id), other);
+  assert.deepEqual(currentResourceUsage(s, s.resources[0].id, "2026-10-20T05:00:00.000Z").groupIds, ["g2"]);
+});
+test("partial cancellation across a preempted gap never resurrects the displaced booking", () => {
+  let s = approve(request(setup(), "2026-10-20T01:00:00.000Z", "2026-10-20T11:00:00.000Z"));
+  s = request(s, partialRange.startAt, partialRange.endAt, "high", { ...contact, groupId: "g2" });
+  s = apply(s, { type: "request.review", id: s.requests[1].id, approve: true, preempt: true, note: "紧急占用" });
+  s = apply(s, partialAction(s, { startAt: "2026-10-20T03:00:00.000Z", endAt: "2026-10-20T07:00:00.000Z" }));
+  assert.deepEqual(s.bookings.filter(b => b.requestId === s.requests[0].id && b.status === "scheduled").map(b => [b.startAt, b.endAt]), [
+    ["2026-10-20T01:00:00.000Z", "2026-10-20T03:00:00.000Z"], ["2026-10-20T07:00:00.000Z", "2026-10-20T11:00:00.000Z"],
+  ]);
+  assert.deepEqual(currentResourceUsage(s, s.resources[0].id, "2026-10-20T05:00:00.000Z").groupIds, ["g2"]);
+});
 test("ten unconfigured regular groups plus the Lingshu participant", () => {
   const s = emptyState();
   assert.equal(s.groups.length, 11);

@@ -9,6 +9,7 @@ import type {
   Priority,
 } from "./types";
 import { lingshuStatusLabels, platformGroup, PLATFORM_GROUP_ID, resourceLingshuStatus } from "./lingshu";
+import { partialCancellationPlan } from "./booking-adjustment";
 export class DomainError extends Error {
   constructor(
     public status: number,
@@ -739,6 +740,45 @@ export function mutate(
         before,
         r,
       );
+      break;
+    }
+    case "request.cancelPartial": {
+      needContact();
+      const r = findRequest();
+      owned(r);
+      if (r.status !== "approved") fail("只能调整已批准的申请", 409);
+      const note = text(action.note, "取消原因", 1000);
+      const resourceIds = ids(action.resourceIds, "需要调整的服务器");
+      if (resourceIds.some(id => !r.resourceIds.includes(id))) fail("只能调整该申请中的服务器");
+      const start = Date.parse(text(action.startAt, "取消开始时间", 64));
+      const end = Date.parse(text(action.endAt, "取消结束时间", 64));
+      if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start)
+        fail("取消结束时间必须晚于开始时间");
+      if (start < Date.parse(now)) fail("不能取消已经过去的时间段");
+      if (start < Date.parse(r.startAt) || end > Date.parse(r.endAt))
+        fail("取消时间必须在原申请范围内");
+      const plan = partialCancellationPlan(s.bookings, r.id, resourceIds, {
+        startAt: new Date(start).toISOString(), endAt: new Date(end).toISOString(),
+      });
+      if (!plan.length) fail("所选时间内没有可取消的有效预约，请刷新后重试", 409);
+      const before = { ...r };
+      for (const { booking: b, cancelled, retained } of plan) {
+        const old = { ...b };
+        // Preserve only the cancelled intersection as history; the tails remain active.
+        Object.assign(b, cancelled, { status: "cancelled", updatedAt: now });
+        const tails = retained.map(range => ({
+          ...old, ...range, id: crypto.randomUUID(), parentId: b.id,
+          createdAt: now, updatedAt: now,
+        }));
+        s.bookings.push(...tails);
+        audit("取消部分时段", "booking", b.id,
+          `${s.resources.find(x => x.id === b.resourceId)?.name} 取消 ${new Date(Date.parse(cancelled.startAt) + 8 * 3600000).toISOString().slice(0, 16).replace("T", " ")} 至 ${new Date(Date.parse(cancelled.endAt) + 8 * 3600000).toISOString().slice(0, 16).replace("T", " ")}（北京时间）：${note}`,
+          old, { cancelled: b, retained: tails });
+      }
+      if (!s.bookings.some(b => b.requestId === r.id && b.status === "scheduled" && b.endAt > now)) {
+        r.status = "cancelled";
+        audit("取消申请", "request", r.id, `剩余预约已全部取消：${note}`, before, r);
+      }
       break;
     }
     case "request.cancel": {
