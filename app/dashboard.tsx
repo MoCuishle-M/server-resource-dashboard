@@ -63,6 +63,7 @@ import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
 import type { TimelineRange } from "@/lib/schedule";
 import { resourceSearch } from "@/lib/resource-search";
+import { auditRange, auditTime, filterAudits, type AuditRange } from "@/lib/audit-search";
 import ResourceTypeFilter from "./resource-type-filter";
 import FontSizeControl from "./font-size-control";
 import AdminSettings from "./admin-settings";
@@ -248,6 +249,11 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [stateFilter, setStateFilter] = useState(""),
     [groupFilter, setGroupFilter] = useState(""),
     [requestFilter, setRequestFilter] = useState("all");
+  const [historyTypes, setHistoryTypes] = useState<string[] | null>(null);
+  const [historyStart, setHistoryStart] = useState("");
+  const [historyEnd, setHistoryEnd] = useState("");
+  const [historyRange, setHistoryRange] = useState<AuditRange>({});
+  const [historyError, setHistoryError] = useState("");
   const [selected, setSelected] = useState<string[]>([]),
     [modal, setModal] = useState<string | null>(null),
     [editResource, setEditResource] = useState<Resource | null>(null),
@@ -396,6 +402,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           (b) => b.resourceId === r.id && b.groupId === groupFilter,
         )),
   );
+  const historyTypeOptions = [...new Set((s?.audits ?? []).map(a => a.action))];
+  const visibleAudits = filterAudits(s?.audits ?? [], { types: historyTypes, search, ...historyRange });
   const orderedRequests = [...(s?.requests ?? [])].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
   );
@@ -1745,13 +1753,12 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       </div>
                       <button
                         className="button"
+                        disabled={!visibleAudits.length}
                         onClick={() =>
                           downloadCSV("变更历史.csv", [
-                            ["时间", "操作人", "操作", "详情"],
-                            ...[...s.audits]
-                              .reverse()
-                              .map((a) => [
-                                fmt(a.at),
+                            ["时间（北京时间）", "操作人", "操作", "详情"],
+                            ...visibleAudits.map((a) => [
+                                auditTime(a.at),
                                 a.actorName,
                                 a.action,
                                 a.summary,
@@ -1773,18 +1780,26 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                           onChange={(e) => setSearch(e.target.value)}
                         />
                       </div>
+                      <ResourceTypeFilter types={historyTypeOptions} selected={historyTypes} onChange={setHistoryTypes}
+                        label="变更类型筛选" allLabel="全部变更类型" emptyMessage="暂无变更类型" />
                     </div>
+                    <form className="history-time-filter" onSubmit={e => {
+                      e.preventDefault();
+                      try { setHistoryRange(auditRange(historyStart, historyEnd)); setHistoryError(""); }
+                      catch (e) { setHistoryError((e as Error).message); }
+                    }}>
+                      <label>执行开始时间<input aria-label="历史开始时间" type="datetime-local" step={1} value={historyStart} onChange={e => setHistoryStart(e.target.value)} /></label>
+                      <label>执行结束时间<input aria-label="历史结束时间" type="datetime-local" step={1} value={historyEnd} onChange={e => setHistoryEnd(e.target.value)} /></label>
+                      <button className="button primary" type="submit">查询时间段</button>
+                      <button className="button" type="button" onClick={() => {
+                        setSearch(""); setHistoryTypes(null); setHistoryStart(""); setHistoryEnd(""); setHistoryRange({}); setHistoryError("");
+                      }}>重置筛选</button>
+                      <p className="muted">按操作发生时间筛选 · 北京时间 · 可只填开始或结束时间，包含结束时刻所在的分钟或秒</p>
+                      {historyError && <p className="history-filter-error" role="alert">{historyError}</p>}
+                    </form>
+                    <p className="history-result-count" role="status">匹配 {visibleAudits.length} 条 / 共 {s.audits.length} 条记录 · 导出仅包含当前筛选结果</p>
                     <div className="audit-list">
-                      {[...s.audits]
-                        .reverse()
-                        .filter(
-                          (a) =>
-                            !search ||
-                            `${a.summary} ${a.actorName} ${a.action}`
-                              .toLowerCase()
-                              .includes(search.toLowerCase()),
-                        )
-                        .map((a) => (
+                      {visibleAudits.map((a) => (
                           <article className="audit-item" key={a.id}>
                             <span
                               className={`audit-icon ${a.action.includes("抢占") ? "alert" : ""}`}
@@ -1802,7 +1817,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               <div className="audit-title">
                                 <strong>{a.action}</strong>
                                 <span>{a.actorName}</span>
-                                <time>{fmt(a.at)}</time>
+                                <time dateTime={a.at}>{auditTime(a.at)}</time>
                               </div>
                               <p>{a.summary}</p>
                               {admin && a.before && (
@@ -1835,10 +1850,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                             </div>
                           </article>
                         ))}
-                      {!s.audits.length && (
+                      {!visibleAudits.length && (
                         <Empty
-                          title="还没有变更记录"
-                          sub="真实操作发生后，记录会自动出现在这里。"
+                          title={s.audits.length ? "没有符合条件的变更记录" : "还没有变更记录"}
+                          sub={s.audits.length ? "请调整变更类型、时间范围或搜索关键词。" : "真实操作发生后，记录会自动出现在这里。"}
                         />
                       )}
                     </div>
@@ -3260,7 +3275,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               )
               .map((a) => (
                 <div key={a.id}>
-                  <time>{fmt(a.at)}</time>
+                  <time dateTime={a.at}>{auditTime(a.at)}</time>
                   <strong>{a.action}</strong>
                   <p>{a.summary}</p>
                   <small>{a.actorName}</small>
