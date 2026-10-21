@@ -61,6 +61,7 @@ import {
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
 import type { TimelineRange } from "@/lib/schedule";
+import { resourceSearch } from "@/lib/resource-search";
 import { downloadCSV, importRows } from "@/lib/csv";
 import {
   readResourceWorkbook,
@@ -368,12 +369,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const groupName = (id: string) =>
     s?.groups.find((g) => g.id === id)?.name ?? "未分组";
   const types = [...new Set(resources.map((r) => r.type))];
+  const matchesSearch = resourceSearch(search);
   const filtered = resources.filter(
     (r) =>
-      (!search ||
-        `${r.name} ${r.ip} ${r.type} ${r.note}`
-          .toLowerCase()
-          .includes(search.toLowerCase())) &&
+      matchesSearch(r) &&
       (!typeFilter || r.type === typeFilter) &&
       (!modeFilter || r.accessMode === modeFilter) &&
       (!stateFilter ||
@@ -1184,9 +1183,11 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     <div className="filters">
                       <div className="search">
                         <Search size={17} />
-                        <input
+                        <textarea
                           aria-label="搜索资源"
+                          aria-describedby="resource-search-help"
                           placeholder="搜索名称、IP、类型或备注"
+                          rows={2}
                           value={search}
                           onChange={(e) => setSearch(e.target.value)}
                         />
@@ -1223,6 +1224,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <option value="maintenance">维护中</option>
                       </select>
                     </div>
+                    <p id="resource-search-help" className="resource-search-help">
+                      多个IP可用空格、英文逗号或换行分隔，匹配任意一个IP。
+                    </p>
                     {selected.length > 0 && admin && (
                       <div className="selection-bar">
                         <span>

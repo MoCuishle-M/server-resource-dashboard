@@ -90,6 +90,22 @@ try {
   await typeFilter.selectOption(importedType);
   assert.equal(await page.locator(".resource-table tbody tr").count(), 2);
   await typeFilter.selectOption("");
+  const searchInput = page.getByLabel("搜索资源", { exact: true });
+  assert.equal(await searchInput.evaluate(e => e.tagName), "TEXTAREA");
+  for (const separator of [" ", ",", "\n", "\r\n", ", \n\t,"]) {
+    await searchInput.fill(`198.51.100.151${separator}198.51.100.152`);
+    assert.equal(await page.locator(".resource-table tbody tr").count(), 2);
+  }
+  await searchInput.fill("198.51.100.151,198.51.100.151\n198.51.100.152,198.51.100.250");
+  assert.equal(await page.locator(".resource-table tbody tr").count(), 2);
+  await typeFilter.selectOption(importedType);
+  await page.getByLabel("使用方式筛选").selectOption("bare");
+  assert.equal(await page.locator(".resource-table tbody tr").count(), 1);
+  assert((await page.locator(".resource-table tbody tr").innerText()).includes("198.51.100.151"));
+  await page.getByLabel("使用方式筛选").selectOption("");
+  await typeFilter.selectOption("");
+  await searchInput.fill("198.51.100.250");
+  await page.getByRole("heading", { name: "没有符合条件的服务器", exact: true }).waitFor();
   await page.getByLabel("搜索资源").fill("Excel-");
   await page.getByLabel("全选当前结果").check();
   await page.getByRole("button", { name: "批量修改", exact: true }).click();

@@ -152,7 +152,7 @@ function ids(value: unknown, label: string) {
     fail(`请选择${label}（最多200项）`);
   return [...new Set(value as string[])];
 }
-function ipValid(ip: string) {
+export function ipValid(ip: string) {
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(ip))
     return ip.split(".").every((n) => +n <= 255);
   if (!ip.includes(":") || /[^\da-fA-F:.]/.test(ip)) return false;

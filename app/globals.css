@@ -767,7 +767,8 @@ h1 {
   flex: 1;
   color: #a3acb7;
 }
-.search input {
+.search input,
+.search textarea {
   padding: 9px 0;
   width: 100%;
   font-size: 11px;
@@ -775,9 +776,13 @@ h1 {
   background: transparent;
   box-shadow: none;
 }
-.search input::placeholder {
+.search input::placeholder,
+.search textarea::placeholder {
   color: #afb6bf;
 }
+.search textarea { min-height: 50px; max-height: 150px; line-height: 1.5; resize: vertical; }
+.search:focus-within { border-color: var(--orange); }
+.resource-search-help { padding: 0 24px 14px; color: #919ca9; font-size: 11px; line-height: 1.6; }
 .search.compact {
   min-width: 170px;
   max-width: 210px;
