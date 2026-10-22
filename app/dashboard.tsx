@@ -1,6 +1,7 @@
 "use client";
 import {
   useEffect,
+  useContext,
   useMemo,
   useRef,
   useState,
@@ -72,6 +73,7 @@ import FontSizeControl from "./font-size-control";
 import AdminSettings from "./admin-settings";
 import PartialCancelForm from "./partial-cancel-form";
 import RequestResourcePicker from "./request-resource-picker";
+import { activeDialog, FeedbackContext, OperationFeedback, type OperationNotice } from "./operation-feedback";
 import { copyRequestDraft } from "@/lib/request-draft";
 import { downloadCSV, importRows } from "@/lib/csv";
 import {
@@ -202,12 +204,16 @@ function Modal({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const feedback = useContext(FeedbackContext);
   useEffect(() => {
     const d = ref.current;
     const previous = document.activeElement as HTMLElement | null;
     d?.showModal();
     return () => {
       d?.close();
+      feedback?.setNotice(current => current?.dialog === d
+        ? current.kind === "error" ? null : { ...current, dialog: null }
+        : current);
       previous?.focus();
     };
   }, []);
@@ -229,6 +235,8 @@ function Modal({
         }
       }}
     >
+      {feedback?.notice?.dialog === ref.current && feedback?.notice && <OperationFeedback
+        notice={feedback.notice} insideDialog onClose={() => feedback.setNotice(null)} />}
       <header>
         <div>
           <h2>{title}</h2>
@@ -248,7 +256,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
-    [toast, setToast] = useState("");
+    [toast, setToast] = useState<OperationNotice | null>(null);
   const s = stored && demo ? { ...serializePublic(stored, stored.actor, stored.now, stored.adminConfigured), demo: true } : stored;
   const [search, setSearch] = useState(""),
     [typeFilter, setTypeFilter] = useState<string[] | null>(null),
@@ -340,11 +348,14 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     return () => clearInterval(t);
   }, [demo]);
   useEffect(() => {
-    if (toast) {
-      const t = setTimeout(() => setToast(""), 4500);
+    if (toast?.kind === "success") {
+      const t = setTimeout(() => setToast(null), 4500);
       return () => clearTimeout(t);
     }
   }, [toast]);
+  function notify(message: string, kind: OperationNotice["kind"] = "success", dialog = activeDialog()) {
+    setToast({ message, kind, dialog: dialog?.open ? dialog : null });
+  }
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -359,6 +370,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   }, []);
   async function run(action: Action, message = "操作已保存", onError?: (message: string) => void) {
     if (!s || busy) return false;
+    const dialog = activeDialog();
+    setToast(null);
     setBusy(true);
     try {
       let next: PublicState;
@@ -381,12 +394,12 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         next = d;
       }
       setS(next);
-      setToast(message);
+      notify(message, "success", dialog);
       return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : "操作失败";
       if (onError) onError(message || "操作失败，请重试");
-      else setToast(message);
+      else notify(message || "操作失败，请重试", "error", dialog);
       if (!demo) await refresh();
       return false;
     } finally {
@@ -796,6 +809,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     </div>
   );
   return (
+    <FeedbackContext.Provider value={{ notice: toast, setNotice: setToast }}>
     <div className="app-shell">
       <aside className="sidebar">
         <a className="brand" href={demo ? "/demo" : "/"}>
@@ -3243,9 +3257,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(detail.ip);
-                  setToast("IP 已复制");
+                  notify("IP 已复制");
                 } catch {
-                  setToast("浏览器未授权剪贴板，请手动复制 IP");
+                  notify("浏览器未授权剪贴板，请手动复制 IP", "error");
                 }
               }}
             >
@@ -3395,14 +3409,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           </div>
         </Modal>
       )}
-      {toast && (
-        <div className="toast" role="status">
-          <span>{toast}</span>
-          <button aria-label="关闭提示" onClick={() => setToast("")}>
-            <X size={15} />
-          </button>
-        </div>
-      )}
+      {toast && !toast.dialog && <OperationFeedback notice={toast} onClose={() => setToast(null)} />}
     </div>
+    </FeedbackContext.Provider>
   );
 }
