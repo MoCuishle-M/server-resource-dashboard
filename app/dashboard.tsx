@@ -74,6 +74,8 @@ import AdminSettings from "./admin-settings";
 import PartialCancelForm from "./partial-cancel-form";
 import RequestResourcePicker from "./request-resource-picker";
 import RequestAssignmentForm from "./request-assignment-form";
+import RequestExtensionForm from "./request-extension-form";
+import { extensionResourceIds } from "@/lib/request-extension";
 import { activeDialog, FeedbackContext, OperationFeedback, type OperationNotice } from "./operation-feedback";
 import { copyRequestDraft } from "@/lib/request-draft";
 import { downloadCSV, importRows } from "@/lib/csv";
@@ -315,6 +317,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     (target?.closest(".field") ?? target)?.scrollIntoView({ block: "center" });
   }, [requestFailure, modal]);
   const [clock, setClock] = useState(new Date().toISOString());
+  const [faultResource, setFaultResource] = useState<Resource | null>(null);
+  const [faultText, setFaultText] = useState("");
+  const [resourceStatus, setResourceStatus] = useState<Resource["status"]>("available");
+  const [extendRequest, setExtendRequest] = useState<UsageRequest | null>(null);
+  const [extensionReviewNote, setExtensionReviewNote] = useState("");
+  useEffect(() => { if (modal === "resource") setResourceStatus(editResource?.status ?? "available"); }, [modal, editResource]);
+  useEffect(() => { setExtensionReviewNote(""); }, [review?.id, review?.pendingExtension?.id]);
   const [assignmentResourceId, setAssignmentResourceId] = useState<string | undefined>();
   useEffect(() => {
     if (!s || s.actor.role === "admin") return;
@@ -324,6 +333,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     if (partialRequest && !s.requests.some(r => r.id === partialRequest.id)) setPartialRequest(null);
     if (cancelRequest && !s.requests.some(r => r.id === cancelRequest.id)) setCancelRequest(null);
     setAssignmentRequest(null);
+    setFaultResource(null);
+    if (extendRequest && (s.actor.role !== "contact" || extendRequest.groupId !== s.actor.groupId)) setExtendRequest(null);
     if (["resource", "bulk-edit", "import"].includes(modal ?? "")) setModal(null);
   }, [stored, detail, review, partialRequest, cancelRequest, modal]);
   async function refresh(initial = false) {
@@ -368,6 +379,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         setReview(null);
         setCancelRequest(null);
         setAssignmentRequest(null);
+        setFaultResource(null);
+        setExtendRequest(null);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -430,7 +443,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const available = resources.filter(
     (r) => r.status === "available" && !used.has(r.id),
   );
-  const pending = s?.requests.filter((r) => r.status === "pending") ?? [];
+  const pending = s?.requests.filter((r) => r.status === "pending" || r.pendingExtension) ?? [];
   const resourceName = (id: string) =>
     s?.resources.find((r) => r.id === id)?.name ?? "历史资源";
   const groupName = (id: string) =>
@@ -439,6 +452,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const remainingBookings = (r: UsageRequest) => requestBookings(r).filter(b => b.status === "scheduled" && b.endAt > clock);
   const canAdjust = (r: UsageRequest) => canApply && (admin || actor.groupId === r.groupId) && r.status === "approved" && remainingBookings(r).length > 0;
   const canReassign = (r: UsageRequest) => admin && r.endAt > clock &&
+    !r.pendingExtension &&
     (r.status === "pending" || (r.status === "approved" && remainingBookings(r).length > 0));
   function openAssignment(r: UsageRequest, resourceId?: string) {
     setToast(null);
@@ -446,6 +460,15 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     setDetail(null);
     setAssignmentResourceId(resourceId);
     setAssignmentRequest(r);
+  }
+  const canExtend = (r: UsageRequest) => canApply && (admin || actor.groupId === r.groupId)
+    && r.status === "approved" && r.endAt > clock && (admin || !r.pendingExtension)
+    && extensionResourceIds(r, s?.bookings ?? [], clock, false, s?.resources).length > 0;
+  function openExtension(r: UsageRequest) {
+    setToast(null); setDetail(null); setReview(null); setExtendRequest(r);
+  }
+  function openFault(r: Resource) {
+    setToast(null); setDetail(null); setFaultResource(r); setFaultText(r.faultDescription ?? "");
   }
   function openPartialCancel(r: UsageRequest, resourceId?: string) {
     setReview(null);
@@ -482,7 +505,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     (r) =>
       (requestFilter === "all" || requestFilter === "mine"
         ? requestFilter !== "mine" || r.groupId === actor.groupId
-        : r.status === requestFilter) &&
+        : requestFilter === "pending" ? r.status === "pending" || !!r.pendingExtension : r.status === requestFilter) &&
       (!groupFilter || r.groupId === groupFilter) &&
       (!search ||
         `${r.purpose} ${r.applicantName} ${groupName(r.groupId)} ${r.resourceIds.map(resourceName).join(" ")}`
@@ -555,7 +578,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   }
   function exportResources() {
     downloadCSV("服务器资源.csv", [
-      ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注", "灵枢平台状态", "状态", "隐藏"],
+      ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注", "灵枢平台状态", "状态", "隐藏", "故障说明"],
       ...filtered.map((r) => [
         r.name,
         r.type,
@@ -567,6 +590,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         resourceLingshuLabel(r),
         resourceStatusLabels[r.status],
         r.hidden ? "是" : "否",
+        r.faultDescription ?? "",
       ]),
     ]);
   }
@@ -689,7 +713,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 <td>
                   <Badge
                     tone={
-                      r.status === "unavailable" ? "red" : r.status !== "available"
+                      ["unavailable", "fault"].includes(r.status) ? "red" : r.status !== "available"
                         ? "neutral"
                         : b
                           ? "orange"
@@ -703,6 +727,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         ? "使用中"
                         : "空闲"}
                   </Badge>
+                  {r.status === "fault" && <small className="fault-description" title={r.faultDescription}>{r.faultDescription}</small>}
                 </td>
                 <td>
                   {b ? (
@@ -763,6 +788,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       详情
                     </button>
                     {admin ? (
+                      <>
+                      <button className="text-button danger-text" aria-label={`标记故障 ${r.name}`} onClick={() => openFault(r)}>{r.status === "fault" ? "更新故障" : "标记故障"}</button>
                       <button
                         className="icon-button"
                         aria-label={`编辑 ${r.name}`}
@@ -774,6 +801,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       >
                         <Pencil size={14} />
                       </button>
+                      </>
                     ) : (
                       r.status === "available" && (
                         <button
@@ -1073,7 +1101,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                             resources.filter((r) => r.status === "maintenance")
                               .length
                           }
-                          台维护中 · {resources.filter(r => r.status === "unavailable").length}台不可用
+                          台维护中 · {resources.filter(r => r.status === "unavailable").length}台不可用 · {resources.filter(r => r.status === "fault").length}台故障中
                         </footer>
                       </article>
                       <article className="kpi kpi-accent">
@@ -1338,6 +1366,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <option value="free">空闲</option>
                         <option value="maintenance">维护中</option>
                         <option value="unavailable">不可用</option>
+                        <option value="fault">故障中</option>
                         {admin && <option value="hidden">已隐藏（仅管理员可见）</option>}
                         {Object.entries(lingshuStatusLabels).map(([value, label]) => <option key={value} value={`lingshu:${value}`}>{label}</option>)}
                       </select>
@@ -1547,6 +1576,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                                 >
                                   {statusLabel[r.status]}
                                 </Badge>
+                                {r.pendingExtension && <small className="orange-text">续期待审批 · 至 {fmt(r.pendingExtension.endAt)}</small>}
                                 {r.reviewNote && (
                                   <small
                                     title={r.reviewNote}
@@ -1559,6 +1589,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               <td className="align-right">
                                 <div className="row-actions">
                                   {canReassign(r) && <button className="text-button orange-text" onClick={() => openAssignment(r)}>调整使用组与事项</button>}
+                                  {canExtend(r) && <button className="text-button orange-text" onClick={() => openExtension(r)}>延长使用</button>}
+                                  {admin && r.pendingExtension && <button className="text-button orange-text" onClick={() => setReview(r)}>审批续期</button>}
                                   {canApply && <button className="text-button" onClick={() => copyRequest(r)}><Copy size={13} />复制申请</button>}
                                   {admin && r.status === "pending" && (
                                     <>
@@ -2063,13 +2095,16 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 <select
                   name="status"
                   aria-label="资源状态"
-                  defaultValue={editResource?.status ?? "available"}
+                  value={resourceStatus}
+                  onChange={e => setResourceStatus(e.target.value as Resource["status"])}
                 >
                   <option value="available">可申请</option>
                   <option value="maintenance">维护中</option>
                   <option value="unavailable">不可用</option>
+                  <option value="fault">故障中 · 保留已有预约</option>
                 </select>
               </Field>
+              {resourceStatus === "fault" && <Field label="故障说明 *" wide><textarea aria-label="故障说明" name="faultDescription" required maxLength={1000} rows={3} defaultValue={editResource?.faultDescription} placeholder="例如：3号卡掉卡、无法开机、网络不通" /></Field>}
               <Field label="资源可见性" wide>
                 <select name="hidden" aria-label="资源可见性" defaultValue={String(!!editResource?.hidden)}>
                   <option value="false">公开显示</option>
@@ -2155,6 +2190,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 { key: "sharingMode", label: "占用模式" },
                 { key: "location", label: "位置" },
                 { key: "note", label: "备注" },
+                { key: "faultDescription", label: "故障说明" },
                 { key: "status", label: "资源状态" },
                 { key: "hidden", label: "资源可见性" },
               ].map((field) => (
@@ -2182,12 +2218,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         disabled={!bulkFields[field.key]}
                         required={!!bulkFields[field.key]}
                         value={bulkValues[field.key] ?? ""}
-                        onChange={(e) =>
+                        onChange={(e) => {
                           setBulkValues({
                             ...bulkValues,
                             [field.key]: e.target.value,
-                          })
-                        }
+                          });
+                          if (field.key === "status" && e.target.value === "fault") setBulkFields(current => ({ ...current, faultDescription: true }));
+                        }}
                       >
                         <option value="">请选择</option>
                         {(field.key === "accessMode"
@@ -2218,7 +2255,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                           ["name", "type"].includes(field.key)
                         }
                         maxLength={
-                          field.key === "note"
+                          ["note", "faultDescription"].includes(field.key)
                             ? 1000
                             : field.key === "location"
                               ? 100
@@ -2354,6 +2391,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "状态",
                     "灵枢平台状态",
                     "隐藏",
+                    "故障说明",
                   ],
                   [
                     "Atlas-示例-01",
@@ -2366,6 +2404,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "可申请",
                     "",
                     "否",
+                    "",
                   ],
                 ])
               }
@@ -2450,7 +2489,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           )}
           <p className="import-help">
             {importMode === "add"
-              ? "必填：名称、类型、IP、使用方式。状态可填可申请、维护中、不可用；隐藏填是或否，默认公开显示。占用模式默认独占；灵枢平台状态默认“通过灵枢平台使用”。"
+              ? "必填：名称、类型、IP、使用方式。状态可填可申请、维护中、不可用、故障中；故障中须填写故障说明。隐藏填是或否，默认公开显示。占用模式默认独占；灵枢平台状态默认“通过灵枢平台使用”。"
               : "按IP匹配已有服务器，填写要更新的列；空白单元格保留原值，未匹配IP将阻止整批更新。"}
           </p>
           <textarea
@@ -2493,6 +2532,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       <th>状态</th>
                       <th>灵枢平台状态</th>
                       <th>隐藏</th>
+                      <th>故障说明</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2534,6 +2574,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         </td>
                         <td>{r.lingshuStatus ? lingshuStatusLabels[r.lingshuStatus as keyof typeof lingshuStatusLabels] : importMode === "update" ? "保留原值" : r.accessMode === "lingshu" ? lingshuStatusLabels.platform : "—"}</td>
                         <td>{r.hidden === undefined ? importMode === "update" ? "保留原值" : "否" : r.hidden ? "是" : "否"}</td>
+                        <td>{r.faultDescription || "—"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -2860,6 +2901,16 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             )}
           </div>
           {review.sourceRequestId && <p className="notice">此工单从原申请拆分调整，沿用原时段及审批记录。</p>}
+          {review.pendingExtension && <section className="extension-review" aria-label="续期审批">
+            <h3>续期待审批</h3>
+            <p>{review.pendingExtension.applicantName} 于 {fmt(review.pendingExtension.requestedAt)} 申请将 {review.pendingExtension.resourceIds.length} 台服务器延长至 {fmt(review.pendingExtension.endAt)}。</p>
+            {review.pendingExtension.note && <p>续期说明：{review.pendingExtension.note}</p>}
+            <p className="muted">批准前仍按原结束时间使用。</p>
+            {admin && <><Field label="续期审批说明"><textarea aria-label="续期审批说明" rows={2} maxLength={1000} value={extensionReviewNote} onChange={e => setExtensionReviewNote(e.target.value)} placeholder="拒绝续期时必填" /></Field>
+              <div className="row-actions">{[true, false].map(approve => <button key={String(approve)} className={`button ${approve ? "primary" : "danger"}`} disabled={busy}
+                onClick={async () => { if (await run({ type: "request.reviewExtension", id: review.id, extensionId: review.pendingExtension!.id, approve, note: extensionReviewNote }, approve ? "续期已批准，排期已延长" : "续期已拒绝，原预约继续有效")) setReview(null); }}>{approve ? "批准续期" : "拒绝续期"}</button>)}</div>
+            </>}
+          </section>}
           {review.status !== "pending" && requestBookings(review).length > 0 && (
             <section aria-label="实际有效排期">
               <h3 className="detail-section-title">实际有效排期</h3>
@@ -2953,6 +3004,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             </button>
             {canApply && <button className="button" onClick={() => copyRequest(review)}><Copy size={14} />复制申请</button>}
             {canReassign(review) && <button className="button" onClick={() => openAssignment(review)}>调整使用组与事项</button>}
+            {canExtend(review) && <button className="button" onClick={() => openExtension(review)}>延长使用</button>}
             {admin && review.status === "pending" && (
               <button
                 disabled={
@@ -2990,6 +3042,21 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           </div>
         </Modal>
       )}
+      {faultResource && admin && <Modal title={`标记服务器故障 · ${faultResource.name}`} sub="可直接标记故障，无需先释放预约；已有预约保留，修复后可恢复可申请。" onClose={() => setFaultResource(null)}>
+        <form onSubmit={async e => { e.preventDefault(); if (await run({ type: "resource.fault", id: faultResource.id, description: faultText }, "故障已记录，已有预约保留")) setFaultResource(null); }}>
+          <Field label="故障说明 *"><textarea aria-label="故障说明" required maxLength={1000} rows={5} value={faultText} onChange={e => setFaultText(e.target.value)} placeholder="例如：3号卡掉卡、无法开机、网络不通，请描述具体故障。" /></Field>
+          <div className="modal-footer"><button type="button" className="button" onClick={() => setFaultResource(null)}>取消</button><button className="button danger" disabled={busy || !faultText.trim()}>确认标记故障</button></div>
+        </form>
+      </Modal>}
+      {extendRequest && canApply && s && <Modal title="延长服务器使用时间" sub={`${extendRequest.purpose} · ${groupName(extendRequest.groupId)} · 北京时间 UTC+8`} onClose={() => setExtendRequest(null)}>
+        <RequestExtensionForm request={s.requests.find(r => r.id === extendRequest.id) ?? extendRequest} resources={s.resources}
+          resourceIds={extensionResourceIds(s.requests.find(r => r.id === extendRequest.id) ?? extendRequest, s.bookings, clock, false, s.resources)} admin={admin} busy={busy}
+          onClose={() => setExtendRequest(null)} onConfirm={async value => {
+            if (await run({ type: "request.extend", id: extendRequest.id, ...value }, admin ? "使用时间已延长，排期已同步" : "续期申请已提交，等待管理员审批")) {
+              setExtendRequest(null); navigate("requests"); setRequestFilter("all");
+            }
+          }} />
+      </Modal>}
       {assignmentRequest && admin && s && (
         <Modal wide title="调整使用组与事项" sub={`${groupName(assignmentRequest.groupId)} · ${assignmentRequest.purpose} · ${fmt(assignmentRequest.startAt)} → ${fmt(assignmentRequest.endAt)}`}
           onClose={() => setAssignmentRequest(null)}>
@@ -3300,6 +3367,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               复制 IP
             </button>
             <span className="spacer" />
+            {admin && <button className="button danger small" onClick={() => openFault(detail)}>{detail.status === "fault" ? "更新故障说明" : "标记故障"}</button>}
+            {admin && detail.status === "fault" && <button className="button small" disabled={busy} onClick={async () => { if (await run({ type: "resource.recover", id: detail.id }, "服务器已恢复可申请，原预约保留")) setDetail(null); }}>恢复可申请</button>}
             {!detail.deleted && detail.status === "available" && (
               <button
                 className="button primary small"
@@ -3313,6 +3382,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             )}
           </div>
           {detail.note && <p className="detail-note">{detail.note}</p>}
+          {detail.status === "fault" && <p className="notice danger fault-note" role="status"><AlertTriangle size={18} />故障说明：{detail.faultDescription}</p>}
           <h3 className="detail-section-title">当前与未来预约</h3>
           <div className="booking-list">
             {s.bookings
@@ -3345,6 +3415,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     const r = s.requests.find(r => r.id === b.requestId);
                     if (r) openAssignment(r, b.resourceId);
                   }}>调整组与事项</button>}
+                  {s.requests.some(r => r.id === b.requestId && canExtend(r)) && <button className="text-button orange-text" onClick={() => {
+                    const r = s.requests.find(r => r.id === b.requestId); if (r) openExtension(r);
+                  }}>延长使用</button>}
                   {s.requests.some(r => r.id === b.requestId) && <button
                     className="text-button"
                     onClick={() => {

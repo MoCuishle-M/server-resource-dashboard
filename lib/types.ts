@@ -11,7 +11,8 @@ export type Resource = {
   sharingMode: SharingMode;
   location: string;
   note: string;
-  status: "available" | "maintenance" | "unavailable";
+  status: "available" | "maintenance" | "unavailable" | "fault";
+  faultDescription?: string;
   hidden?: boolean;
   deleted: boolean;
   createdAt: string;
@@ -37,6 +38,16 @@ export type Account = {
 export type UsageRequest = {
   id: string;
   sourceRequestId?: string;
+  pendingExtension?: {
+    id: string;
+    originalEndAt: string;
+    endAt: string;
+    resourceIds: string[];
+    applicantId: string;
+    applicantName: string;
+    requestedAt: string;
+    note: string;
+  };
   groupId: string;
   resourceIds: string[];
   startAt: string;

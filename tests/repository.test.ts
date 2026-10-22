@@ -195,6 +195,29 @@ test("real D1 persistence, atomic rollback and concurrent writers", async () => 
       resourceIds: allocation.resources.map(r => r.id), groupId: "g3", purpose: "过期修改" }, now);
     await assert.rejects(saveState(db, allocation, staleAllocation), /数据刚刚发生变化/);
     assert.deepEqual(await loadState(db), allocationPersisted);
+    const renewalEnd = "2026-10-21T05:00:00.000Z";
+    const pendingRenewal = mutate(allocationPersisted, { ...admin, role: "contact", groupId: "g11" },
+      { type: "request.extend", id: child.id, endAt: renewalEnd, note: "D1续期测试" }, now);
+    await saveState(db, allocationPersisted, pendingRenewal);
+    let renewalState = await loadState(db);
+    const renewal = renewalState.requests.find(r => r.id === child.id)!.pendingExtension!;
+    assert.equal(renewal.endAt, renewalEnd);
+    assert.equal(renewalState.requests.find(r => r.id === child.id)!.endAt, child.endAt);
+    const broken = mutate(renewalState, admin, { type: "resource.fault", id: child.resourceIds[0], description: "D1硬盘故障" }, now);
+    await saveState(db, renewalState, broken);
+    renewalState = await loadState(db);
+    assert.equal(renewalState.resources.find(r => r.id === child.resourceIds[0])!.faultDescription, "D1硬盘故障");
+    const renewalAction = { type: "request.reviewExtension", id: child.id, extensionId: renewal.id, approve: true };
+    assert.throws(() => mutate(renewalState, admin, renewalAction, now), /无法续期/);
+    const recovered = mutate(renewalState, admin, { type: "resource.recover", id: child.resourceIds[0] }, now);
+    await saveState(db, renewalState, recovered);
+    renewalState = await loadState(db);
+    const renewalApproved = mutate(renewalState, admin, renewalAction, now);
+    await saveState(db, renewalState, renewalApproved);
+    renewalState = await loadState(db);
+    assert.equal(renewalState.requests.find(r => r.id === child.id)!.endAt, renewalEnd);
+    assert(!renewalState.requests.find(r => r.id === child.id)!.pendingExtension);
+    assert.equal(renewalState.bookings.find(b => b.requestId === child.id)!.endAt, renewalEnd);
   } finally {
     await mf.dispose();
   }

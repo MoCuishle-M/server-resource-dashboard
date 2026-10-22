@@ -1,7 +1,7 @@
 import type { Actor, Resource, State } from "./types";
 
 export const resourceStatusLabels: Record<Resource["status"], string> = {
-  available: "可申请", maintenance: "维护中", unavailable: "不可用",
+  available: "可申请", maintenance: "维护中", unavailable: "不可用", fault: "故障中",
 };
 
 /** Apply before serializing, including action responses and demo role changes. */

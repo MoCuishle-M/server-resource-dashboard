@@ -38,6 +38,7 @@ export type ResourceImportRow = {
   sharingMode?: string;
   location?: string;
   note?: string;
+  faultDescription?: string;
   status?: string;
   hidden?: boolean;
 };
@@ -57,6 +58,7 @@ export function resourceTableRows(
     sharingMode: ["占用模式", "共享模式", "sharingMode"],
     location: ["位置", "机房", "location"],
     note: ["备注", "note"],
+    faultDescription: ["故障说明", "故障原因", "faultDescription"],
     status: ["状态", "资源状态", "status"],
     hidden: ["隐藏", "是否隐藏", "仅管理员可见", "hidden"],
   };
@@ -95,6 +97,9 @@ export function resourceTableRows(
     maintenance: "maintenance",
     不可用: "unavailable",
     unavailable: "unavailable",
+    故障: "fault",
+    故障中: "fault",
+    fault: "fault",
   };
   const lingshu: Record<string, string> = Object.fromEntries(
     Object.entries(lingshuStatusLabels).flatMap(([key, label]) => [[key, key], [label, key]]),
@@ -126,8 +131,10 @@ export function resourceTableRows(
           continue;
         }
         if (value && !status[value])
-          throw new Error(`第${i + 2}行：状态应为“可申请”、“维护中”或“不可用”`);
+          throw new Error(`第${i + 2}行：状态应为“可申请”、“维护中”、“不可用”或“故障中”`);
         out[key] = status[value] ?? "available";
+      } else if (key === "faultDescription") {
+        if (value) out[key] = value;
       } else if (key === "hidden") {
         if (!value && mode === "add") continue;
         if (["是", "隐藏", "仅管理员", "true", "1"].includes(value)) out.hidden = true;

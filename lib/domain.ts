@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { lingshuStatusLabels, platformGroup, PLATFORM_GROUP_ID, resourceLingshuStatus } from "./lingshu";
 import { partialCancellationPlan } from "./booking-adjustment";
+import { extensionResourceIds } from "./request-extension";
 import { resourceStatusLabels, visibleResourceState } from "./resource-policy";
 export class DomainError extends Error {
   constructor(
@@ -215,6 +216,38 @@ export function mutate(
     if (!admin && r.resourceIds.some(id => s.resources.some(resource => resource.id === id && resource.hidden)))
       fail("该申请需要由管理员处理", 403);
   }
+  function validateExtension(r: UsageRequest, endAt: string, resourceIds: string[]) {
+    const startAt = r.endAt > now ? r.endAt : now;
+    if (r.status !== "approved") fail("只能延长已批准的申请", 409);
+    if (endAt <= r.endAt || endAt <= now) fail("新的结束时间必须晚于原结束时间和当前时间");
+    if (Date.parse(endAt) - Date.parse(r.startAt) > 366 * 86400000) fail("单次预约最长366天");
+    const eligible = extensionResourceIds(r, s.bookings, now, true);
+    if (!resourceIds.length || resourceIds.some(id => !eligible.includes(id)))
+      fail("部分服务器的末段预约已取消或被抢占，请重新提交续期申请", 409);
+    for (const id of resourceIds) {
+      const resource = s.resources.find(x => x.id === id && !x.deleted);
+      if (!resource || resource.status !== "available") fail("部分服务器故障、维护中、不可用或已删除，无法续期", 409);
+      if (resourceSharingMode(resource) === "exclusive" && s.bookings.some(b => b.resourceId === id
+        && b.status === "scheduled" && overlaps(b, { startAt, endAt })))
+        fail(`${resource.name} 在延长时段已有预约，请调整结束时间或先协调资源`, 409);
+    }
+    return { startAt, resourceIds };
+  }
+  function applyExtension(r: UsageRequest, endAt: string, resourceIds: string[], note = "") {
+    const range = validateExtension(r, endAt, resourceIds);
+    const before = structuredClone(r);
+    const tails = s.bookings.filter(b => b.requestId === r.id && resourceIds.includes(b.resourceId)
+      && b.status === "scheduled" && b.endAt === r.endAt);
+    for (const b of tails) {
+      if (r.endAt >= now) Object.assign(b, { endAt, updatedAt: now });
+      else s.bookings.push({ ...b, id: crypto.randomUUID(), parentId: b.id, startAt: range.startAt,
+        endAt, createdAt: now, updatedAt: now });
+    }
+    r.endAt = endAt;
+    delete r.pendingExtension;
+    audit("延长服务器使用", "request", [r.id, ...resourceIds].join(","),
+      `${r.purpose}：${resourceIds.length}台服务器延长至${endAt}${note ? `：${note}` : ""}`, before, r);
+  }
   function resourceInput(value: unknown, previous?: Resource): Resource {
     const v = value as Record<string, unknown>;
     if (!v || typeof v !== "object") fail("服务器数据格式不正确");
@@ -244,6 +277,7 @@ export function mutate(
       ...(v.accessMode === "lingshu" ? { lingshuStatus: lingshuStatus as Resource["lingshuStatus"] } : {}),
       sharingMode: sharingMode as Resource["sharingMode"],
       status: v.status as Resource["status"],
+      ...(v.status === "fault" ? { faultDescription: text(v.faultDescription ?? previous?.faultDescription ?? "", "故障说明", 1000) } : {}),
       hidden: v.hidden === undefined ? previous?.hidden ?? false : v.hidden,
       location: text(v.location ?? "", "位置", 100, false),
       note: text(v.note ?? "", "备注", 1000, false),
@@ -275,7 +309,7 @@ export function mutate(
         );
     }
     if (
-      r.status !== "available" &&
+      !["available", "fault"].includes(r.status) &&
       s.bookings.some(
         (b) =>
           b.resourceId === r.id && b.status === "scheduled" && b.endAt > now,
@@ -291,6 +325,7 @@ export function mutate(
     "sharingMode",
     "location",
     "note",
+    "faultDescription",
     "status",
     "hidden",
   ];
@@ -394,6 +429,24 @@ export function mutate(
       const before = { ...account };
       account.status = "rejected";
       audit("撤销管理员权限", "account", account.id, `撤销 ${account.displayName} 的管理员权限`, before, account);
+      break;
+    }
+    case "resource.fault": {
+      needAdmin();
+      const previous = s.resources.find(r => r.id === action.id && !r.deleted);
+      if (!previous) fail("服务器不存在", 404);
+      const r = resourceInput({ ...previous, status: "fault", faultDescription: action.description }, previous);
+      s.resources[s.resources.indexOf(previous)] = r;
+      audit("标记服务器故障", "resource", r.id, `${r.name} 故障：${r.faultDescription}`, previous, r);
+      break;
+    }
+    case "resource.recover": {
+      needAdmin();
+      const previous = s.resources.find(r => r.id === action.id && !r.deleted);
+      if (!previous || previous.status !== "fault") fail("服务器当前不是故障状态，请刷新", 409);
+      const r = resourceInput({ ...previous, status: "available" }, previous);
+      s.resources[s.resources.indexOf(previous)] = r;
+      audit("服务器故障恢复", "resource", r.id, `${r.name} 已恢复可申请`, previous, r);
       break;
     }
     case "resource.save": {
@@ -752,9 +805,45 @@ export function mutate(
       );
       break;
     }
+    case "request.extend": {
+      needContact();
+      const r = findRequest();
+      owned(r);
+      if (r.status !== "approved" || r.endAt <= now) fail("原预约已结束或尚未批准，请重新申请", 409);
+      if (!admin && r.pendingExtension) fail("已有待审批续期申请，请等待管理员处理", 409);
+      const endAt = new Date(text(action.endAt, "新的结束时间", 64)).toISOString();
+      const resourceIds = extensionResourceIds(r, s.bookings, now, false, s.resources);
+      validateExtension(r, endAt, resourceIds);
+      const note = text(action.note ?? "", "续期说明", 1000, false);
+      if (admin) applyExtension(r, endAt, resourceIds, note);
+      else {
+        const before = structuredClone(r);
+        r.pendingExtension = { id: crypto.randomUUID(), originalEndAt: r.endAt, endAt, resourceIds,
+          applicantId: actor.userId, applicantName: actor.displayName, requestedAt: now, note };
+        audit("提交续期申请", "request", [r.id, ...resourceIds].join(","), `${r.purpose} 申请延长至${endAt}${note ? `：${note}` : ""}`, before, r);
+      }
+      break;
+    }
+    case "request.reviewExtension": {
+      needAdmin();
+      const r = findRequest(), extension = r.pendingExtension;
+      if (!extension || extension.id !== action.extensionId) fail("续期申请已处理或发生变化，请刷新", 409);
+      if (typeof action.approve !== "boolean") fail("审批结果不正确");
+      const note = text(action.note ?? "", "续期审批说明", 1000, false);
+      if (!action.approve && !note) fail("拒绝续期请填写原因");
+      const before = structuredClone(r);
+      if (action.approve) {
+        if (r.endAt !== extension.originalEndAt) fail("原预约已发生变化，请重新提交续期申请", 409);
+        applyExtension(r, extension.endAt, extension.resourceIds, note);
+      } else delete r.pendingExtension;
+      audit(action.approve ? "批准续期申请" : "拒绝续期申请", "request", [r.id, ...extension.resourceIds].join(","),
+        `${r.purpose} 续期${action.approve ? "批准" : "拒绝"}${note ? `：${note}` : ""}`, before, r);
+      break;
+    }
     case "request.reassign": {
       needAdmin();
       const r = findRequest();
+      if (r.pendingExtension) fail("请先处理待审批续期申请，再调整使用组和事项", 409);
       if (!["pending", "approved"].includes(r.status) || r.endAt <= now)
         fail("只能调整尚未结束的待审批或已批准申请", 409);
       const resourceIds = ids(action.resourceIds, "需要调整的服务器");
@@ -828,6 +917,7 @@ export function mutate(
       }
       if (!s.bookings.some(b => b.requestId === r.id && b.status === "scheduled" && b.endAt > now)) {
         r.status = "cancelled";
+        delete r.pendingExtension;
         audit("取消申请", "request", r.id, `剩余预约已全部取消：${note}`, before, r);
       }
       break;
@@ -847,6 +937,7 @@ export function mutate(
       if (r.status === "approved" && !future.length)
         fail("该申请已经全部结束", 409);
       r.status = "cancelled";
+      delete r.pendingExtension;
       for (const b of future) {
         const old = { ...b };
         if (b.startAt < now) {
