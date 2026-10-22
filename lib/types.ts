@@ -36,6 +36,7 @@ export type Account = {
 };
 export type UsageRequest = {
   id: string;
+  sourceRequestId?: string;
   groupId: string;
   resourceIds: string[];
   startAt: string;

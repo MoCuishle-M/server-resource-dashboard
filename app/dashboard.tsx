@@ -73,6 +73,7 @@ import FontSizeControl from "./font-size-control";
 import AdminSettings from "./admin-settings";
 import PartialCancelForm from "./partial-cancel-form";
 import RequestResourcePicker from "./request-resource-picker";
+import RequestAssignmentForm from "./request-assignment-form";
 import { activeDialog, FeedbackContext, OperationFeedback, type OperationNotice } from "./operation-feedback";
 import { copyRequestDraft } from "@/lib/request-draft";
 import { downloadCSV, importRows } from "@/lib/csv";
@@ -276,6 +277,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [editGroup, setEditGroup] = useState<Group | null>(null),
     [detail, setDetail] = useState<Resource | null>(null),
     [review, setReview] = useState<UsageRequest | null>(null),
+    [assignmentRequest, setAssignmentRequest] = useState<UsageRequest | null>(null),
     [reviewApprove, setReviewApprove] = useState(true),
     [reviewNote, setReviewNote] = useState(""),
     [preempt, setPreempt] = useState(false),
@@ -313,6 +315,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     (target?.closest(".field") ?? target)?.scrollIntoView({ block: "center" });
   }, [requestFailure, modal]);
   const [clock, setClock] = useState(new Date().toISOString());
+  const [assignmentResourceId, setAssignmentResourceId] = useState<string | undefined>();
   useEffect(() => {
     if (!s || s.actor.role === "admin") return;
     if (stateFilter === "hidden") setStateFilter("");
@@ -320,6 +323,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     if (review && !s.requests.some(r => r.id === review.id)) setReview(null);
     if (partialRequest && !s.requests.some(r => r.id === partialRequest.id)) setPartialRequest(null);
     if (cancelRequest && !s.requests.some(r => r.id === cancelRequest.id)) setCancelRequest(null);
+    setAssignmentRequest(null);
     if (["resource", "bulk-edit", "import"].includes(modal ?? "")) setModal(null);
   }, [stored, detail, review, partialRequest, cancelRequest, modal]);
   async function refresh(initial = false) {
@@ -363,6 +367,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         setDetail(null);
         setReview(null);
         setCancelRequest(null);
+        setAssignmentRequest(null);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -433,6 +438,15 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const requestBookings = (r: UsageRequest) => (s?.bookings ?? []).filter(b => b.requestId === r.id);
   const remainingBookings = (r: UsageRequest) => requestBookings(r).filter(b => b.status === "scheduled" && b.endAt > clock);
   const canAdjust = (r: UsageRequest) => canApply && (admin || actor.groupId === r.groupId) && r.status === "approved" && remainingBookings(r).length > 0;
+  const canReassign = (r: UsageRequest) => admin && r.endAt > clock &&
+    (r.status === "pending" || (r.status === "approved" && remainingBookings(r).length > 0));
+  function openAssignment(r: UsageRequest, resourceId?: string) {
+    setToast(null);
+    setReview(null);
+    setDetail(null);
+    setAssignmentResourceId(resourceId);
+    setAssignmentRequest(r);
+  }
   function openPartialCancel(r: UsageRequest, resourceId?: string) {
     setReview(null);
     setDetail(null);
@@ -1544,6 +1558,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               </td>
                               <td className="align-right">
                                 <div className="row-actions">
+                                  {canReassign(r) && <button className="text-button orange-text" onClick={() => openAssignment(r)}>调整使用组与事项</button>}
                                   {canApply && <button className="text-button" onClick={() => copyRequest(r)}><Copy size={13} />复制申请</button>}
                                   {admin && r.status === "pending" && (
                                     <>
@@ -2844,6 +2859,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               <div className="notice">审批说明：{review.reviewNote}</div>
             )}
           </div>
+          {review.sourceRequestId && <p className="notice">此工单从原申请拆分调整，沿用原时段及审批记录。</p>}
           {review.status !== "pending" && requestBookings(review).length > 0 && (
             <section aria-label="实际有效排期">
               <h3 className="detail-section-title">实际有效排期</h3>
@@ -2934,6 +2950,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               关闭
             </button>
             {canApply && <button className="button" onClick={() => copyRequest(review)}><Copy size={14} />复制申请</button>}
+            {canReassign(review) && <button className="button" onClick={() => openAssignment(review)}>调整使用组与事项</button>}
             {admin && review.status === "pending" && (
               <button
                 disabled={
@@ -2969,6 +2986,20 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               </button>
             )}
           </div>
+        </Modal>
+      )}
+      {assignmentRequest && admin && s && (
+        <Modal wide title="调整使用组与事项" sub={`${groupName(assignmentRequest.groupId)} · ${assignmentRequest.purpose} · ${fmt(assignmentRequest.startAt)} → ${fmt(assignmentRequest.endAt)}`}
+          onClose={() => setAssignmentRequest(null)}>
+          <RequestAssignmentForm request={s.requests.find(r => r.id === assignmentRequest.id) ?? assignmentRequest}
+            bookings={s.bookings} resources={s.resources} groups={s.groups} clock={clock} busy={busy} initialResourceId={assignmentResourceId}
+            onClose={() => setAssignmentRequest(null)} onConfirm={async value => {
+              if (await run({ type: "request.reassign", id: assignmentRequest.id, ...value }, "使用组与事项已调整，排期已同步")) {
+                setAssignmentRequest(null);
+                navigate("requests");
+                setRequestFilter("all");
+              }
+            }} />
         </Modal>
       )}
       {partialRequest && s && (
@@ -3308,6 +3339,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     const r = s.requests.find(r => r.id === b.requestId);
                     if (r) openPartialCancel(r, b.resourceId);
                   }}>取消部分时段</button>}
+                  {s.requests.some(r => r.id === b.requestId && canReassign(r)) && <button className="text-button orange-text" onClick={() => {
+                    const r = s.requests.find(r => r.id === b.requestId);
+                    if (r) openAssignment(r, b.resourceId);
+                  }}>调整组与事项</button>}
                   {s.requests.some(r => r.id === b.requestId) && <button
                     className="text-button"
                     onClick={() => {

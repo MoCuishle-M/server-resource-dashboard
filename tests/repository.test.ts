@@ -169,6 +169,32 @@ test("real D1 persistence, atomic rollback and concurrent writers", async () => 
     const stalePublic = mutate(persisted, admin, { type: "resource.bulkUpdate", ids: [persisted.resources[1].id], changes: { hidden: false } }, now);
     await assert.rejects(saveState(db, persisted, stalePublic), /数据刚刚发生变化/);
     assert.deepEqual(await loadState(db), privateLoaded);
+    // A split allocation, its booking links and audit must persist in one revision.
+    let allocation = await loadState(db);
+    const restored = mutate(allocation, admin, { type: "resource.bulkUpdate", ids: allocation.resources.map(r => r.id), changes: { status: "available" } }, now);
+    await saveState(db, allocation, restored);
+    allocation = await loadState(db);
+    for (const action of [
+      { type: "request.create", resourceIds: allocation.resources.map(r => r.id), groupId: "g1", purpose: "整批预留",
+        priority: "normal", startAt: "2026-10-21T01:00:00.000Z", endAt: "2026-10-21T04:00:00.000Z" },
+      { type: "request.review", approve: true, note: "整批批准" },
+    ]) {
+      const saved = mutate(allocation, admin, { ...action, ...(action.type === "request.review" ? { id: allocation.requests.at(-1)!.id } : {}) }, now);
+      await saveState(db, allocation, saved);
+      allocation = await loadState(db);
+    }
+    const reassigned = mutate(allocation, admin, { type: "request.reassign", id: allocation.requests.at(-1)!.id,
+      resourceIds: [allocation.resources[0].id], groupId: "g11", purpose: "平台使用事项" }, now);
+    await saveState(db, allocation, reassigned);
+    const allocationPersisted = await loadState(db);
+    assert.deepEqual(allocationPersisted, { ...reassigned, audits: [...reassigned.audits].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id)) });
+    const child = allocationPersisted.requests.find(r => r.purpose === "平台使用事项")!;
+    assert(child.sourceRequestId);
+    assert.equal(allocationPersisted.bookings.find(b => b.requestId === child.id)!.groupId, "g11");
+    const staleAllocation = mutate(allocation, admin, { type: "request.reassign", id: allocation.requests.at(-1)!.id,
+      resourceIds: allocation.resources.map(r => r.id), groupId: "g3", purpose: "过期修改" }, now);
+    await assert.rejects(saveState(db, allocation, staleAllocation), /数据刚刚发生变化/);
+    assert.deepEqual(await loadState(db), allocationPersisted);
   } finally {
     await mf.dispose();
   }

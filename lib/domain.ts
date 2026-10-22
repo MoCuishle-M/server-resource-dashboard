@@ -749,6 +749,47 @@ export function mutate(
       );
       break;
     }
+    case "request.reassign": {
+      needAdmin();
+      const r = findRequest();
+      if (!["pending", "approved"].includes(r.status) || r.endAt <= now)
+        fail("只能调整尚未结束的待审批或已批准申请", 409);
+      const resourceIds = ids(action.resourceIds, "需要调整的服务器");
+      if (resourceIds.some(id => !r.resourceIds.includes(id)))
+        fail("只能调整该申请中的服务器");
+      if (resourceIds.some(id => !s.resources.some(resource => resource.id === id && !resource.deleted)))
+        fail("部分服务器已删除，请刷新后重试", 409);
+      if (r.status === "approved" && resourceIds.some(id => !s.bookings.some(b =>
+        b.requestId === r.id && b.resourceId === id && b.status === "scheduled" && b.endAt > now)))
+        fail("部分服务器已无剩余有效预约，请重新选择", 409);
+      const groupId = text(action.groupId, "使用组");
+      if (!s.groups.some(g => g.id === groupId)) fail("使用组不存在");
+      const purpose = text(action.purpose, "使用事项", 1000);
+      if (groupId === r.groupId && purpose === r.purpose) fail("使用组和事项未发生变化");
+      const before = structuredClone(r);
+      const selected = new Set(resourceIds);
+      const bookings = s.bookings.filter(b => b.requestId === r.id && selected.has(b.resourceId));
+      const oldBookings = structuredClone(bookings);
+      let target = r;
+      if (resourceIds.length < r.resourceIds.length) {
+        target = { ...r, id: crypto.randomUUID(), sourceRequestId: r.sourceRequestId ?? r.id,
+          resourceIds: r.resourceIds.filter(id => selected.has(id)) };
+        r.resourceIds = r.resourceIds.filter(id => !selected.has(id));
+        s.requests.push(target);
+      }
+      target.groupId = groupId;
+      target.purpose = purpose;
+      // This corrects the allocation for the original application period. Preserve every
+      // interval, booking identity and cancellation/preemption state, including split tails.
+      for (const b of bookings) Object.assign(b, {
+        requestId: target.id, groupId, purpose, updatedAt: now,
+      });
+      audit("调整使用组与事项", "request", [...new Set([r.id, target.id, ...resourceIds])].join(","),
+        `${resourceIds.length}台服务器调整至${s.groups.find(g => g.id === groupId)!.name}：${purpose}${target !== r ? "（从原申请拆分）" : ""}`,
+        { request: before, bookings: oldBookings },
+        { source: r, request: target, bookings });
+      break;
+    }
     case "request.cancelPartial": {
       needContact();
       const r = findRequest();
