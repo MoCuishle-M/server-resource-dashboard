@@ -1,0 +1,55 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { copyRequestDraft } from '../lib/request-draft';
+import { emptyState, mutate } from '../lib/domain';
+import type { Actor, Resource, UsageRequest } from '../lib/types';
+const admin: Actor = { userId:'admin',displayName:'管理员',email:'a@test',role:'admin',groupId:'',employeeId:'' };
+const contact: Actor = { ...admin,userId:'contact',displayName:'新申请人',role:'contact',groupId:'g1' };
+const resource: Resource = { id:'r1',name:'测试服务器',ip:'192.0.2.1',type:'8卡',accessMode:'bare',sharingMode:'exclusive',location:'',note:'',status:'available',deleted:false,createdAt:'2026-10-01T00:00:00.000Z',updatedAt:'2026-10-01T00:00:00.000Z' };
+const source: UsageRequest = { id:'old-request',groupId:'g2',resourceIds:['r1'],startAt:'2026-10-20T01:00:00.000Z',endAt:'2026-10-20T11:00:00.000Z',purpose:'历史训练任务',priority:'high',status:'approved',applicantId:'old-applicant',applicantName:'原申请人',createdAt:'2026-10-19T00:00:00.000Z',reviewedAt:'2026-10-19T00:00:00.000Z',reviewer:'原审批人',reviewNote:'已经批准' };
+test('copy shifts elapsed Beijing dates while preserving time of day, duration and overnight range',()=>{
+  const snapshot=structuredClone(source);
+  const morning=copyRequestDraft(source,[resource],admin,'2026-10-22T00:00:00.000Z');
+  assert.equal(morning.startAt,'2026-10-22T01:00:00.000Z');
+  assert.equal(morning.endAt,'2026-10-22T11:00:00.000Z');
+  const noon=copyRequestDraft(source,[resource],admin,'2026-10-22T04:00:00.000Z');
+  assert.equal(noon.startAt,'2026-10-23T01:00:00.000Z');
+  const night=copyRequestDraft({...source,startAt:'2026-10-20T13:00:00.000Z',endAt:'2026-10-21T01:00:00.000Z'},[resource],admin,'2026-10-22T14:00:00.000Z');
+  assert.equal(night.startAt,'2026-10-23T13:00:00.000Z');
+  assert.equal(night.endAt,'2026-10-24T01:00:00.000Z');
+  assert.equal(night.shifted,true);
+  assert.deepEqual(source,snapshot);
+});
+test('future copies retain dates and configuration but omit identity and approval results',()=>{
+  const draft=copyRequestDraft(source,[resource],admin,'2026-10-19T00:00:00.000Z');
+  assert.equal(draft.startAt,source.startAt);
+  assert.equal(draft.endAt,source.endAt);
+  assert.equal(draft.purpose,source.purpose);
+  assert.equal(draft.priority,'high');
+  assert.equal(draft.groupId,'g2');
+  assert.equal(draft.shifted,false);
+  for(const key of ['id','status','applicantId','applicantName','reviewedAt','reviewer','reviewNote'])assert(!(key in draft));
+});
+test('copy excludes missing, unavailable, deleted or unauthorized resources and uses the contact group',()=>{
+  const resources=[resource,{...resource,id:'r2',status:'unavailable' as const},{...resource,id:'r3',deleted:true},{...resource,id:'r4',hidden:true}];
+  const original={...source,resourceIds:['r1','r2','r3','r4','missing']};
+  const draft=copyRequestDraft(original,resources,contact,'2026-10-22T00:00:00.000Z');
+  assert.deepEqual(draft.resourceIds,['r1']);
+  assert.equal(draft.skipped,4);
+  assert.equal(draft.groupId,'g1');
+  assert.deepEqual(copyRequestDraft(original,resources,admin,'2026-10-22T00:00:00.000Z').resourceIds,['r1','r4']);
+});
+test('submitting a copied historical request creates a separate pending request under the current applicant',()=>{
+  const s=emptyState();s.resources=[resource];s.requests=[source];
+  const now='2026-10-22T00:00:00.000Z';
+  const draft=copyRequestDraft(source,s.resources,contact,now);
+  const next=mutate(s,contact,{...draft,type:'request.create'},now);
+  assert.equal(next.requests.length,2);
+  const created=next.requests[1];
+  assert.notEqual(created.id,source.id);
+  assert.equal(created.status,'pending');
+  assert.equal(created.applicantId,contact.userId);
+  assert.equal(created.groupId,'g1');
+  assert.equal(created.reviewNote,'');
+  assert.deepEqual(next.requests[0],source);
+});

@@ -3,13 +3,14 @@ import { useId, useState } from "react";
 import { Popover } from "radix-ui";
 import { ChevronDown, Filter, Search } from "lucide-react";
 
-export default function ResourceTypeFilter({ types, selected, onChange, label: filterLabel = "类型筛选", allLabel = "全部类型", emptyMessage = "暂无服务器类型" }: {
+export default function ResourceTypeFilter({ types, selected, onChange, label: filterLabel = "类型筛选", allLabel = "全部类型", emptyMessage = "暂无服务器类型", portalContainer }: {
   types: string[];
   selected: string[] | null;
   onChange: (types: string[] | null) => void;
   label?: string;
   allLabel?: string;
   emptyMessage?: string;
+  portalContainer?: HTMLElement;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -35,7 +36,7 @@ export default function ResourceTypeFilter({ types, selected, onChange, label: f
         <Filter size={13} /><span>{label}</span><ChevronDown size={13} />
       </button>
     </Popover.Trigger>
-    <Popover.Portal>
+    <Popover.Portal container={portalContainer}>
       <Popover.Content className="type-filter-popup" align="start" sideOffset={7} collisionPadding={12} aria-labelledby={titleId}>
         <header><h3 id={titleId}>{filterLabel}</h3><span>可选择多种类型</span></header>
         <div className="search type-filter-search"><Search size={14} /><input aria-label="搜索类型" placeholder="搜索类型" value={query} onChange={e => setQuery(e.target.value)} /></div>

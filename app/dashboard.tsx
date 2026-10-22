@@ -71,6 +71,8 @@ import { lingshuStatusLabels, PLATFORM_GROUP_ID, resourceLingshuStatus, resource
 import FontSizeControl from "./font-size-control";
 import AdminSettings from "./admin-settings";
 import PartialCancelForm from "./partial-cancel-form";
+import RequestResourcePicker from "./request-resource-picker";
+import { copyRequestDraft } from "@/lib/request-draft";
 import { downloadCSV, importRows } from "@/lib/csv";
 import {
   readResourceWorkbook,
@@ -283,6 +285,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const [importFileName, setImportFileName] = useState("");
   const [readingFile, setReadingFile] = useState(false);
   const [requestResources, setRequestResources] = useState<string[]>([]),
+    [copyNotice, setCopyNotice] = useState(""),
     [requestGroup, setRequestGroup] = useState("g1"),
     [requestDate, setRequestDate] = useState(chinaDate()),
     [requestSlot, setRequestSlot] = useState<number | null>(null),
@@ -471,6 +474,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     const start = new Date(Date.now() + 3600000);
     start.setMinutes(0, 0, 0);
     setRequestResources(ids);
+    setCopyNotice("");
     setRequestGroup(actor.groupId || "g1");
     setRequestDate(chinaDate(start));
     setRequestSlot(null);
@@ -487,6 +491,19 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     setPriority("normal");
     setPurpose("");
     setModal("request");
+  }
+  function copyRequest(source: UsageRequest) {
+    if (!canApply) return;
+    const draft = copyRequestDraft(source, resources, actor, new Date().toISOString());
+    openRequest(draft.resourceIds);
+    setReview(null);
+    setRequestGroup(draft.groupId);
+    setRequestDate(chinaDate(new Date(draft.startAt)));
+    setRequestStart(localInput(draft.startAt));
+    setRequestEnd(localInput(draft.endAt));
+    setPurpose(draft.purpose);
+    setPriority(draft.priority);
+    setCopyNotice(`复制自“${source.purpose}”。${draft.shifted ? "过期时间已顺延，原时段和时长保留。" : "已保留原申请时间。"}${draft.skipped ? `有${draft.skipped}台当前不可申请的服务器未选入。` : ""}请核对并修改后提交，新工单将重新审批。`);
   }
   function changeSlot(slot: number, dateValue = requestDate) {
     setRequestSlot(slot);
@@ -1498,6 +1515,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               </td>
                               <td className="align-right">
                                 <div className="row-actions">
+                                  {canApply && <button className="text-button" onClick={() => copyRequest(r)}><Copy size={13} />复制申请</button>}
                                   {admin && r.status === "pending" && (
                                     <>
                                       <button
@@ -2596,57 +2614,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               }
             }}
           >
+            {copyNotice && <p className="notice request-copy-notice" role="status">{copyNotice}</p>}
             <div className="request-layout">
-              <div>
-                <div className="field">
-                  <span>选择服务器 *</span>
-                  <div className="resource-picker">
-                    {resources
-                      .filter((r) => r.status === "available")
-                      .map((r) => (
-                        <label
-                          key={r.id}
-                          className={
-                            requestResources.includes(r.id) ? "chosen" : ""
-                          }
-                        >
-                          <input
-                            type="checkbox"
-                            checked={requestResources.includes(r.id)}
-                            onChange={(e) =>
-                              setRequestResources(
-                                e.target.checked
-                                  ? [...requestResources, r.id]
-                                  : requestResources.filter(
-                                      (id) => id !== r.id,
-                                    ),
-                              )
-                            }
-                          />
-                          <span>
-                            <strong>{r.name}</strong>
-                            <small>
-                              {r.type} ·{" "}
-                              {r.accessMode === "bare" ? "裸机" : "灵枢平台"} ·{" "}
-                              {resourceSharingMode(r) === "shared"
-                                ? "共享"
-                                : "独占"}
-                            </small>
-                          </span>
-                          <Badge tone={used.has(r.id) ? "orange" : "green"}>
-                            {used.has(r.id) ? "使用中" : "空闲"}
-                          </Badge>
-                        </label>
-                      ))}
-                    {!resources.filter((r) => r.status === "available")
-                      .length && <p className="muted">暂无可申请服务器</p>}
-                  </div>
-                </div>
-                <span className="text-small muted">
-                  已选 {requestResources.length} 台 ·
-                  共享资源可同时申请；独占资源审批时检查时间冲突。
-                </span>
-              </div>
+              <RequestResourcePicker resources={resources} selected={requestResources} used={used} onChange={setRequestResources} />
               <div className="request-fields">
                 <Field label="使用者 *">
                   <select
@@ -2758,7 +2728,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               </button>
               <button
                 className="button primary"
-                disabled={busy || !requestResources.length}
+                disabled={busy || !requestResources.length || requestResources.some(id => !resources.some(r => r.id === id && r.status === "available"))}
               >
                 <ArrowRight size={16} />
                 提交申请
@@ -2903,6 +2873,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             <button className="button" onClick={() => setReview(null)}>
               关闭
             </button>
+            {canApply && <button className="button" onClick={() => copyRequest(review)}><Copy size={14} />复制申请</button>}
             {admin && review.status === "pending" && (
               <button
                 disabled={

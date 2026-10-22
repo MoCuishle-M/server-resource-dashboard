@@ -8,10 +8,11 @@ const browser = await chromium.launch({ headless: true, channel: "chromium", arg
 });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-  await page.clock.setFixedTime(new Date("2026-10-21T02:00:00Z"));
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
   await page.goto(base + "/demo", { waitUntil: "networkidle" });
+  await page.waitForFunction(() => document.querySelector('[aria-label="演示角色"]')?.value === "admin");
+  await page.clock.setFixedTime(new Date("2026-10-21T02:00:00Z"));
   async function approve(purpose, start, end, group) {
     await page.getByRole("button", { name: "申请资源", exact: true }).click();
     let d = page.getByRole("dialog");
