@@ -293,6 +293,17 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [requestEnd, setRequestEnd] = useState(""),
     [purpose, setPurpose] = useState(""),
     [priority, setPriority] = useState("normal");
+  const [requestFailure, setRequestFailure] = useState<{ message: string; field?: "start" | "end" } | null>(null);
+  const requestStartRef = useRef<HTMLInputElement>(null);
+  const requestEndRef = useRef<HTMLInputElement>(null);
+  const requestErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!requestFailure || modal !== "request") return;
+    const target = requestFailure.field === "start" ? requestStartRef.current
+      : requestFailure.field === "end" ? requestEndRef.current : requestErrorRef.current;
+    target?.focus({ preventScroll: true });
+    (target?.closest(".field") ?? target)?.scrollIntoView({ block: "center" });
+  }, [requestFailure, modal]);
   const [clock, setClock] = useState(new Date().toISOString());
   useEffect(() => {
     if (!s || s.actor.role === "admin") return;
@@ -346,7 +357,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  async function run(action: Action, message = "操作已保存") {
+  async function run(action: Action, message = "操作已保存", onError?: (message: string) => void) {
     if (!s || busy) return false;
     setBusy(true);
     try {
@@ -373,7 +384,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
       setToast(message);
       return true;
     } catch (e) {
-      setToast(e instanceof Error ? e.message : "操作失败");
+      const message = e instanceof Error ? e.message : "操作失败";
+      if (onError) onError(message || "操作失败，请重试");
+      else setToast(message);
       if (!demo) await refresh();
       return false;
     } finally {
@@ -475,6 +488,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     start.setMinutes(0, 0, 0);
     setRequestResources(ids);
     setCopyNotice("");
+    setRequestFailure(null);
     setRequestGroup(actor.groupId || "g1");
     setRequestDate(chinaDate(start));
     setRequestSlot(null);
@@ -506,6 +520,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     setCopyNotice(`复制自“${source.purpose}”。${draft.shifted ? "过期时间已顺延，原时段和时长保留。" : "已保留原申请时间。"}${draft.skipped ? `有${draft.skipped}台当前不可申请的服务器未选入。` : ""}请核对并修改后提交，新工单将重新审批。`);
   }
   function changeSlot(slot: number, dateValue = requestDate) {
+    setRequestFailure(null);
     setRequestSlot(slot);
     const t = timeRange(dateValue, slot);
     setRequestStart(localInput(t.startAt));
@@ -2588,21 +2603,38 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           onClose={() => setModal(null)}
         >
           <form
+            onChange={() => setRequestFailure(null)}
             onSubmit={async (e) => {
               e.preventDefault();
               try {
+                const startAt = isoInput(requestStart);
+                const endAt = isoInput(requestEnd);
+                if (Date.parse(startAt) < Date.now()) {
+                  setRequestFailure({ message: "开始时间不能早于当前时间，请重新选择。", field: "start" });
+                  return;
+                }
+                if (Date.parse(endAt) <= Date.parse(startAt)) {
+                  setRequestFailure({ message: "结束时间必须晚于开始时间，请重新选择。", field: "end" });
+                  return;
+                }
+                if (Date.parse(endAt) - Date.parse(startAt) > 366 * 86400000) {
+                  setRequestFailure({ message: "申请时长不能超过366天，请调整结束时间。", field: "end" });
+                  return;
+                }
+                setRequestFailure(null);
                 if (
                   await run(
                     {
                       type: "request.create",
                       groupId: requestGroup,
                       resourceIds: requestResources,
-                      startAt: isoInput(requestStart),
-                      endAt: isoInput(requestEnd),
+                      startAt,
+                      endAt,
                       purpose,
                       priority,
                     },
                     "申请已提交，等待管理员审批",
+                    (message) => setRequestFailure({ message }),
                   )
                 ) {
                   setModal(null);
@@ -2610,7 +2642,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   setRequestFilter("pending");
                 }
               } catch {
-                setToast("请填写有效的起止时间");
+                setRequestFailure({ message: "请填写有效的起止时间。", field: "start" });
               }
             }}
           >
@@ -2667,6 +2699,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 <div className="form-grid">
                   <Field label="开始时间 *">
                     <input
+                      ref={requestStartRef}
+                      aria-label="开始时间 *"
+                      aria-invalid={requestFailure?.field === "start" || undefined}
+                      aria-describedby={requestFailure?.field === "start" ? "request-start-error" : undefined}
                       required
                       type="datetime-local"
                       value={requestStart}
@@ -2675,9 +2711,14 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         setRequestStart(e.target.value);
                       }}
                     />
+                    {requestFailure?.field === "start" && <span id="request-start-error" className="request-field-error">{requestFailure.message}</span>}
                   </Field>
                   <Field label="结束时间 *">
                     <input
+                      ref={requestEndRef}
+                      aria-label="结束时间 *"
+                      aria-invalid={requestFailure?.field === "end" || undefined}
+                      aria-describedby={requestFailure?.field === "end" ? "request-end-error" : undefined}
                       required
                       type="datetime-local"
                       value={requestEnd}
@@ -2686,6 +2727,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         setRequestEnd(e.target.value);
                       }}
                     />
+                    {requestFailure?.field === "end" && <span id="request-end-error" className="request-field-error">{requestFailure.message}</span>}
                   </Field>
                 </div>
                 <Field label="任务优先级">
@@ -2714,6 +2756,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 </Field>
               </div>
             </div>
+            {requestFailure && <div ref={requestErrorRef} className="request-submit-error" role="alert" tabIndex={-1}>
+              <strong>申请未提交</strong>
+              <p>{requestFailure.message}</p>
+            </div>}
             <div className="modal-footer">
               <span className="muted text-small">
                 共享服务器可并行使用；独占服务器审批时检查冲突。
