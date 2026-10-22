@@ -63,14 +63,16 @@ export function activeBookings(s: State, now: string) {
 export function resourceSharingMode(resource?: Pick<Resource, "sharingMode">) {
   return resource?.sharingMode ?? "exclusive";
 }
-export function approvalConflicts(s: State, request: UsageRequest) {
+export function approvalConflicts(s: State, request: UsageRequest, notBefore?: string) {
+  const range = notBefore && request.startAt < notBefore ? { ...request, startAt: notBefore } : request;
+  if (range.endAt <= range.startAt) return [];
   return s.bookings.filter(
     (b) =>
       b.status === "scheduled" &&
       request.resourceIds.includes(b.resourceId) &&
       resourceSharingMode(s.resources.find((r) => r.id === b.resourceId)) ===
         "exclusive" &&
-      overlaps(b, request),
+      overlaps(b, range),
   );
 }
 export function currentResourceUsage(
@@ -669,13 +671,14 @@ export function mutate(
       const note = text(action.note ?? "", "审批说明", 1000, false);
       if (!action.approve && !note) fail("拒绝申请请填写原因");
       if (action.approve) {
-        if (r.startAt < now) fail("该申请开始时间已过，请重新申请", 409);
+        if (r.endAt <= now) fail("该申请结束时间已过，无法批准，请重新申请", 409);
+        const effectiveStart = r.startAt < now ? now : r.startAt;
         for (const id of r.resourceIds) {
           const resource = s.resources.find((x) => x.id === id && !x.deleted);
           if (!resource || resource.status !== "available")
             fail("服务器已删除、维护中或不可用", 409);
         }
-        const conflicts = approvalConflicts(s, r);
+        const conflicts = approvalConflicts(s, r, effectiveStart);
         if (conflicts.length) {
           if (action.preempt !== true)
             fail(
@@ -693,11 +696,11 @@ export function mutate(
             const old = { ...b };
             b.status = "preempted";
             b.updatedAt = now;
-            if (b.startAt < r.startAt)
+            if (b.startAt < effectiveStart)
               s.bookings.push({
                 ...old,
                 id: crypto.randomUUID(),
-                endAt: r.startAt,
+                endAt: effectiveStart,
                 parentId: b.id,
                 updatedAt: now,
               });
@@ -725,7 +728,7 @@ export function mutate(
             requestId: r.id,
             resourceId,
             groupId: r.groupId,
-            startAt: r.startAt,
+            startAt: effectiveStart,
             endAt: r.endAt,
             purpose: r.purpose,
             priority: r.priority,

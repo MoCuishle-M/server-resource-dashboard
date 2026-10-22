@@ -1,0 +1,45 @@
+import { chromium } from 'playwright';
+import assert from 'node:assert/strict';
+const base = process.env.BASE_URL ?? 'http://127.0.0.1:5173';
+const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
+const browser = await chromium.launch({ headless: true, channel: 'chromium', args: ['--no-sandbox'],
+  ...(proxy && !/^http:\/\/(127\.0\.0\.1|localhost)/.test(base) ? { proxy: { server: proxy } } : {}) });
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  const now = Date.now();
+  await page.clock.install({ time: now });
+  await page.goto(base + '/demo', { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.waitForFunction(() => document.querySelector('[aria-label="演示角色"]')?.value === 'admin', {}, { timeout: 90000 });
+  await page.clock.fastForward(3 * 3600000);
+  await page.getByRole('button', { name: '申请与审批', exact: true }).click();
+  await page.getByRole('button', { name: '审批', exact: true }).first().click();
+  let d = page.getByRole('dialog');
+  await d.getByText(/申请开始时间已过，仍可审批/).waitFor();
+  await d.getByRole('button', { name: '确认批准', exact: true }).click();
+  await d.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: '全部申请', exact: true }).click();
+  const approved = page.getByRole('row').filter({ hasText: 'Atlas-950-01' });
+  assert.match(await approved.innerText(), /已批准/);
+  await approved.getByRole('button', { name: '详情', exact: true }).click();
+  d = page.getByRole('dialog');
+  const actual = d.getByRole('region', { name: '实际有效排期' });
+  const start = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false }).format(now + 3 * 3600000);
+  assert.match(await actual.innerText(), new RegExp(start));
+  await page.screenshot({ path: 'outputs/late-approval.png' });
+  await d.getByLabel('关闭', { exact: true }).click();
+  await page.clock.fastForward(4 * 3600000);
+  await page.getByRole('button', { name: '审批', exact: true }).first().click();
+  d = page.getByRole('dialog');
+  await d.getByText(/申请结束时间已过，无法批准/).waitFor();
+  await d.getByRole('button', { name: '确认批准', exact: true }).click();
+  await d.locator('.modal-feedback').waitFor();
+  assert.match(await d.locator('.modal-feedback').innerText(), /结束时间已过/);
+  await d.getByRole('button', { name: '拒绝申请', exact: true }).click();
+  await d.getByLabel('处理原因 *', { exact: true }).fill('使用时段已经结束');
+  await d.getByRole('button', { name: '确认拒绝', exact: true }).click();
+  await d.waitFor({ state: 'hidden' });
+  assert.match(await page.getByRole('row').filter({ hasText: 'Atlas-950-02' }).innerText(), /已拒绝/);
+  assert.deepEqual(errors, []);
+  console.log('PASS: overdue-start approval succeeds with remaining effective time and original plan preserved; completely expired approval fails visibly but can still be rejected.');
+} finally { await browser.close(); }

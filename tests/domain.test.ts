@@ -78,6 +78,58 @@ function approve(s: State, id = s.requests.at(-1)!.id) {
   return apply(s, { type: "request.review", id, approve: true, note: "" });
 }
 const partialRange = { startAt: "2026-10-20T04:00:00.000Z", endAt: "2026-10-20T06:00:00.000Z" };
+test("late approval accepts remaining time and preserves the original plan and actual review time", () => {
+  const base = setup();
+  const submitted = "2026-10-20T09:47:00.000Z";
+  const startAt = "2026-10-20T10:00:00.000Z", endAt = "2026-10-20T14:00:00.000Z";
+  const reviewed = "2026-10-20T11:00:00.000Z";
+  const pending = mutate(base, contact, { type: "request.create", resourceIds: [base.resources[0].id],
+    startAt, endAt, priority: "normal", purpose: "17:47申请18点使用" }, submitted);
+  const s = mutate(pending, admin, { type: "request.review", id: pending.requests[0].id, approve: true }, reviewed);
+  assert.equal(s.requests[0].status, "approved");
+  assert.equal(s.requests[0].startAt, startAt);
+  assert.equal(s.requests[0].createdAt, submitted);
+  assert.equal(s.requests[0].reviewedAt, reviewed);
+  assert.deepEqual([s.bookings[0].startAt, s.bookings[0].endAt, s.bookings[0].createdAt], [reviewed, endAt, reviewed]);
+  assert.equal(activeBookings(s, "2026-10-20T10:30:00.000Z").length, 0);
+  assert.equal(activeBookings(s, reviewed).length, 1);
+  assert.equal(pending.bookings.length, 0);
+});
+test("late approval checks only remaining conflicts and does not rewrite earlier bookings", () => {
+  let s = approve(request(setup(), "2026-10-20T01:00:00.000Z", "2026-10-20T03:00:00.000Z"));
+  const earlier = structuredClone(s.bookings[0]);
+  s = request(s, "2026-10-20T02:00:00.000Z", "2026-10-20T08:00:00.000Z");
+  const id = s.requests[1].id, reviewAt = "2026-10-20T04:00:00.000Z";
+  assert.equal(approvalConflicts(s, s.requests[1]).length, 1);
+  assert.equal(approvalConflicts(s, s.requests[1], reviewAt).length, 0);
+  s = mutate(s, admin, { type: "request.review", id, approve: true }, reviewAt);
+  assert.deepEqual(s.bookings[0], earlier);
+  assert.equal(s.bookings[1].startAt, reviewAt);
+});
+test("late preemption still requires confirmation and retains elapsed usage and the future tail", () => {
+  let s = approve(request(setup(), "2026-10-20T01:00:00.000Z", "2026-10-20T10:00:00.000Z"));
+  const oldId = s.requests[0].id;
+  s = request(s, "2026-10-20T02:00:00.000Z", "2026-10-20T08:00:00.000Z", "high");
+  const action = { type: "request.review", id: s.requests[1].id, approve: true, note: "紧急任务" };
+  const reviewAt = "2026-10-20T04:00:00.000Z";
+  assert.throws(() => mutate(s, admin, action, reviewAt), /冲突/);
+  const next = mutate(s, admin, { ...action, preempt: true }, reviewAt);
+  assert.deepEqual(next.bookings.filter(b => b.requestId === oldId && b.status === "scheduled").map(b => [b.startAt, b.endAt]), [
+    ["2026-10-20T01:00:00.000Z", reviewAt], ["2026-10-20T08:00:00.000Z", "2026-10-20T10:00:00.000Z"],
+  ]);
+  assert.equal(next.bookings.at(-1)!.startAt, reviewAt);
+});
+test("fully expired approvals are rejected at the end boundary; rejection and role checks remain valid", () => {
+  const s = request(setup());
+  const action = { type: "request.review", id: s.requests[0].id, approve: true };
+  assert.throws(() => mutate(s, admin, action, s.requests[0].endAt), /结束时间已过/);
+  assert.throws(() => mutate(s, contact, action, "2026-10-20T02:00:00.000Z"), /仅服务器管理员/);
+  const rejected = mutate(s, admin, { ...action, approve: false, note: "时段已结束" }, s.requests[0].endAt);
+  assert.equal(rejected.requests[0].status, "rejected");
+  assert.equal(s.requests[0].status, "pending");
+  const exact = mutate(s, admin, action, s.requests[0].startAt);
+  assert.equal(exact.bookings[0].startAt, s.requests[0].startAt);
+});
 function partialAction(s: State, extra: Record<string, unknown> = {}) {
   return { type: "request.cancelPartial", id: s.requests[0].id, resourceIds: [s.resources[0].id], ...partialRange, note: "临时任务占用12–14点", ...extra };
 }

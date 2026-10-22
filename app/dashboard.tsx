@@ -597,7 +597,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           b.status === "scheduled" && b.groupId === g.id && b.startAt > clock,
       ).length,
     })) ?? [];
-  const conflicts = review && s ? approvalConflicts(s, review) : [];
+  const conflicts = review && s ? approvalConflicts(s, review, clock) : [];
   const showResourceTable = (limit?: number) => (
     <div className="table-scroll">
       <table className="resource-table">
@@ -2874,6 +2874,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           )}
           {admin && review.status === "pending" && (
             <>
+              {review.startAt < clock && review.endAt > clock && <p className="notice" role="status">申请开始时间已过，仍可审批。批准后从实际审批时刻起生效，至原结束时间；原申请时段与实际审批时间会保留。</p>}
+              {review.endAt <= clock && <p className="notice danger" role="alert">申请结束时间已过，无法批准；仍可填写原因拒绝该申请。</p>}
               <div className="review-switch">
                 <button
                   className={reviewApprove ? "selected" : ""}
