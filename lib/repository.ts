@@ -9,8 +9,10 @@ const tables = [
   "bookings",
   "audits",
   "invitations",
+  "weeklyPlans",
+  "weeklyDemands",
 ] as const;
-const tableName = (name: typeof tables[number]) => name === "invitations" ? "admin_invitations" : name;
+const tableName = (name: typeof tables[number]) => (name === "invitations" ? "admin_invitations" : name === "weeklyPlans" ? "weekly_plans" : name === "weeklyDemands" ? "weekly_demands" : name);
 export async function loadState(db: D1Database): Promise<State> {
   const results = await db.batch([
     db.prepare("SELECT revision FROM meta WHERE id='main'"),

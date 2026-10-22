@@ -26,6 +26,8 @@
     "test:settings": "node tests/settings-browser.mjs",
     "test:settings-api": "node tests/settings-api.mjs",
     "test:history": "node tests/history-browser.mjs",
+    "test:weekly": "node tests/weekly-browser.mjs",
+    "test:weekly-api": "node tests/weekly-api.mjs",
     "test:lingshu": "node tests/lingshu-browser.mjs",
     "test:bulk": "node tests/bulk-browser.mjs",
     "test:bulk-api": "node tests/bulk-api.mjs"

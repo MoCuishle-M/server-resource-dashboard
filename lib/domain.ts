@@ -12,6 +12,7 @@ import { lingshuStatusLabels, platformGroup, PLATFORM_GROUP_ID, resourceLingshuS
 import { partialCancellationPlan } from "./booking-adjustment";
 import { extensionResourceIds } from "./request-extension";
 import { resourceStatusLabels, visibleResourceState } from "./resource-policy";
+import { applyWeeklyAction, visibleWeeklyState } from "./weekly-actions";
 export class DomainError extends Error {
   constructor(
     public status: number,
@@ -45,6 +46,8 @@ export function emptyState(): State {
     audits: [],
     settings: { announcement: "", authorSignature: "" },
     invitations: [],
+    weeklyPlans: [],
+    weeklyDemands: [],
   };
 }
 export function overlaps(
@@ -268,6 +271,8 @@ export function mutate(
         : v.sharingMode;
     if (!["exclusive", "shared"].includes(sharingMode as string))
       fail("占用模式应为独占或共享");
+    if (![undefined, "", "green", "blue"].includes(v.zone as string | undefined)) fail("区域应为绿区或蓝区");
+    if (![undefined, "", "A3", "A5"].includes(v.family as string | undefined)) fail("排期型号应为A3或A5");
     return {
       id: previous?.id ?? crypto.randomUUID(),
       name: text(v.name, "服务器名称", 80),
@@ -280,6 +285,9 @@ export function mutate(
       ...(v.status === "fault" ? { faultDescription: text(v.faultDescription ?? previous?.faultDescription ?? "", "故障说明", 1000) } : {}),
       hidden: v.hidden === undefined ? previous?.hidden ?? false : v.hidden,
       location: text(v.location ?? "", "位置", 100, false),
+      zone: text(v.zone ?? previous?.zone ?? "", "区域", 10, false) as Resource["zone"],
+      family: text(v.family ?? previous?.family ?? "", "排期型号", 10, false) as Resource["family"],
+      rack: text(v.rack ?? previous?.rack ?? "", "机柜", 80, false),
       note: text(v.note ?? "", "备注", 1000, false),
       deleted: false,
       createdAt: previous?.createdAt ?? now,
@@ -328,6 +336,9 @@ export function mutate(
     "faultDescription",
     "status",
     "hidden",
+    "zone",
+    "family",
+    "rack",
   ];
   function checkedChanges(value: unknown) {
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -378,6 +389,11 @@ export function mutate(
       fail("IP地址重复，请检查已有资源及导入表格");
     if (new Set(live.map((r) => r.name)).size !== live.length)
       fail("服务器名称重复");
+  }
+  if (action.type.startsWith("weekly.")) {
+    applyWeeklyAction(s, actor, action, now, { fail, audit });
+    s.revision++;
+    return s;
   }
   switch (action.type) {
     case "site.settings": {
@@ -976,9 +992,11 @@ export function serializePublic(
   now: string,
   adminConfigured: boolean,
 ) {
+  const weekly = visibleWeeklyState(s, actor);
   s = visibleResourceState(s, actor);
   return {
     ...s,
+    ...weekly,
     invitations: actor.role === "admin" ? s.invitations : [],
     accounts:
       actor.role === "admin"
@@ -992,7 +1010,7 @@ export function serializePublic(
           : "",
     })),
     audits: s.audits
-      .filter((a) => actor.role === "admin" || a.entityType !== "account")
+      .filter((a) => actor.role === "admin" || !["account", "weekly"].includes(a.entityType))
       .map((a) =>
         actor.role === "admin"
           ? a

@@ -42,3 +42,11 @@ export const adminInvitations = sqliteTable("admin_invitations", {
   id: text("id").primaryKey(),
   payload: text("payload").notNull(),
 });
+export const weeklyPlans = sqliteTable("weekly_plans", {
+  id: text("id").primaryKey(),
+  payload: text("payload").notNull(),
+});
+export const weeklyDemands = sqliteTable("weekly_demands", {
+  id: text("id").primaryKey(),
+  payload: text("payload").notNull(),
+});

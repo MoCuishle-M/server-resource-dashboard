@@ -10,6 +10,9 @@ export type Resource = {
   lingshuStatus?: LingshuStatus;
   sharingMode: SharingMode;
   location: string;
+  zone?: "green" | "blue" | "";
+  family?: "A3" | "A5" | "";
+  rack?: string;
   note: string;
   status: "available" | "maintenance" | "unavailable" | "fault";
   faultDescription?: string;
@@ -37,6 +40,8 @@ export type Account = {
 };
 export type UsageRequest = {
   id: string;
+  weeklyPlanId?: string;
+  weeklyDemandId?: string;
   sourceRequestId?: string;
   pendingExtension?: {
     id: string;
@@ -106,6 +111,60 @@ export type State = {
   audits: Audit[];
   settings: SiteSettings;
   invitations: AdminInvitation[];
+  weeklyPlans: WeeklyPlan[];
+  weeklyDemands: WeeklyDemand[];
+};
+export type WeeklyLine = {
+  id: string;
+  zone: "green" | "blue";
+  family: "A3" | "A5";
+  accessMode: "bare" | "lingshu";
+  desired: number;
+  minimum: number;
+  mode: "single" | "multi";
+  rackPolicy: "required" | "prefer" | "any";
+  preferredResourceIds: string[];
+  shareCount: number;
+};
+export type WeeklyDemand = {
+  id: string;
+  planId: string;
+  groupId: string;
+  title: string;
+  category: "version" | "model" | "ticket" | "customer";
+  reason: string;
+  deadline: string;
+  expectedStart: string;
+  expectedEnd: string;
+  continuousHours: number;
+  timeNote: string;
+  holdMode: "week" | "window";
+  shareWithDemandIds: string[];
+  shareNote: string;
+  lines: WeeklyLine[];
+  status: "active" | "withdrawn";
+  createdAt: string;
+  updatedAt: string;
+};
+export type WeeklyAllocation = {
+  demandId: string;
+  lineId: string;
+  resourceIds: string[];
+  sharedResourceIds: string[];
+  locked: boolean;
+  note: string;
+};
+export type WeeklyPlan = {
+  directory?: { id: string; title: string; groupId: string }[];
+  id: string;
+  weekStart: string;
+  status: "collecting" | "draft" | "confirming" | "published";
+  allocations: WeeklyAllocation[];
+  deferred: { demandId: string; reason: string }[];
+  confirmations: { groupId: string; status: "confirmed" | "changes"; note: string; at: string; by: string }[];
+  createdAt: string;
+  updatedAt: string;
+  publishedAt: string;
 };
 export type Actor = {
   userId: string;

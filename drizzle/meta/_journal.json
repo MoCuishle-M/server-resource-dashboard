@@ -15,6 +15,13 @@
       "when": 1792552374439,
       "tag": "0001_powerful_spitfire",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792675146070,
+      "tag": "0002_ordinary_mojo",
+      "breakpoints": true
     }
   ]
 }

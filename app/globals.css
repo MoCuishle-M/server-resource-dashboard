@@ -1,4 +1,58 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap");
+.weekly-workspace { display: grid; gap: 22px; min-width: 0; }
+.weekly-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.weekly-actions select { max-width: 100%; }
+.weekly-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 0 24px 22px; }
+.weekly-steps > span { display: flex; gap: 10px; align-items: center; padding: 13px; border-radius: 8px; color: var(--muted); background: #f6f7f9; }
+.weekly-steps b { border: 1px solid var(--line); border-radius: 50%; width: 24px; height: 24px; display: grid; place-items: center; flex-shrink: 0; }
+.weekly-steps .current { background: var(--orange-soft); color: #b75325; }
+.weekly-metrics { display: flex; flex-wrap: wrap; gap: 30px; padding: 0 24px 22px; }
+.weekly-metrics > span { display: grid; gap: 5px; color: #677383; }
+.weekly-metrics strong { font-size: 26px; color: var(--ink); }
+.weekly-toolbar { padding: 0 24px 16px; }
+.weekly-caption { padding: 0 24px 22px; color: #718093; line-height: 1.8; }
+.weekly-checks { padding: 24px; display: grid; gap: 14px; }
+.weekly-checks .muted, .weekly-confirmations > .muted { line-height: 1.8; }
+.weekly-checks ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+.weekly-checks li { display: flex; gap: 10px; align-items: baseline; padding: 12px; background: #fff8ec; border-radius: 7px; line-height: 1.7; overflow-wrap: anywhere; }
+.weekly-checks li.error { background: #fff0ed; color: #9f4436; }
+.weekly-checks li b { white-space: nowrap; font-size: .85em; }
+.weekly-pass { color: var(--green); line-height: 1.7; }
+.weekly-table { min-width: 1160px; width: 100%; }
+.weekly-table td { vertical-align: top; max-width: 340px; white-space: normal; overflow-wrap: anywhere; line-height: 1.7; }
+.weekly-table td:first-child { min-width: 190px; }
+.weekly-table small { display: block; color: #748193; margin-top: 5px; }
+.weekly-table td > strong { display: block; }
+.weekly-cell-line { padding-bottom: 13px; margin-bottom: 13px; border-bottom: 1px solid var(--line); }
+.weekly-cell-line:last-child { margin-bottom: 0; border: 0; }
+.weekly-cell-line strong { display: flex; align-items: center; gap: 5px; }
+.weekly-row-actions { display: grid; gap: 12px; justify-items: start; }
+.weekly-deferred { color: #a37325; }
+.weekly-table details { margin-top: 10px; }
+.weekly-table details p { margin-top: 8px; white-space: pre-wrap; }
+.weekly-confirmations { padding: 24px; display: grid; gap: 15px; }
+.weekly-confirmations > div { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding-top: 14px; border-top: 1px solid var(--line); }
+.weekly-confirmations small { display: block; color: #748193; margin-top: 6px; overflow-wrap: anywhere; }
+.weekly-empty { padding: 35px 24px; display: grid; justify-items: center; gap: 12px; color: #7d8999; text-align: center; line-height: 1.8; }
+.weekly-dialog .notice { margin: 15px 0; }
+.weekly-dialog .form-grid { padding: 0; }
+.weekly-dialog form { display: grid; gap: 16px; }
+.weekly-dialog > form > .field { margin-top: 10px; }
+.weekly-dialog .field input, .weekly-dialog .field select, .weekly-dialog .field textarea { width: 100%; }
+.weekly-line { margin: 0; min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 8px; display: grid; gap: 16px; }
+.weekly-line legend { padding: 0 8px; color: #53667c; font-weight: 600; }
+.weekly-options { display: grid; gap: 10px; max-height: 220px; overflow: auto; }
+.weekly-options .checkbox-label { align-items: flex-start; overflow-wrap: anywhere; }
+.weekly-details { display: grid; gap: 12px; }
+.weekly-details .weekly-options { margin-top: 14px; }
+.weekly-picker { max-height: 380px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.weekly-pick-row { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 14px; border-bottom: 1px solid var(--line); }
+.weekly-pick-row > label:first-child { align-items: flex-start; flex: 1; }
+.weekly-pick-row small { display: block; color: #748193; margin-top: 5px; overflow-wrap: anywhere; }
+.weekly-publish-warning { padding: 10px 0; color: #9b6d23; line-height: 1.8; }
+@media (max-width: 650px) { .weekly-dialog .form-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 900px) { .weekly-steps { grid-template-columns: repeat(2, 1fr); } .weekly-overview .section-heading { flex-wrap: wrap; gap: 16px; } }
+@media (max-width: 650px) { .weekly-actions { width: 100%; } .weekly-actions select { width: 100%; } .weekly-steps { padding: 0 16px 16px; } .weekly-steps > span { padding: 10px; font-size: .85em; } .weekly-metrics { padding: 0 16px 16px; gap: 20px; } .weekly-toolbar, .weekly-caption { padding-left: 16px; padding-right: 16px; } .weekly-checks, .weekly-confirmations { padding: 18px 16px; } .weekly-confirmations > div, .weekly-pick-row { align-items: flex-start; flex-direction: column; } .weekly-line { padding: 12px; } }
 :root {
   --bg: #f6f7f9;
   --panel: #fff;

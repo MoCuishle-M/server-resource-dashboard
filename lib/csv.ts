@@ -37,6 +37,9 @@ export type ResourceImportRow = {
   lingshuStatus?: string;
   sharingMode?: string;
   location?: string;
+  zone?: string;
+  family?: string;
+  rack?: string;
   note?: string;
   faultDescription?: string;
   status?: string;
@@ -57,6 +60,9 @@ export function resourceTableRows(
     lingshuStatus: ["灵枢平台状态", "平台状态", "lingshuStatus"],
     sharingMode: ["占用模式", "共享模式", "sharingMode"],
     location: ["位置", "机房", "location"],
+    zone: ["区域", "zone"],
+    family: ["排期型号", "family"],
+    rack: ["机柜", "rack"],
     note: ["备注", "note"],
     faultDescription: ["故障说明", "故障原因", "faultDescription"],
     status: ["状态", "资源状态", "status"],
@@ -111,7 +117,13 @@ export function resourceTableRows(
     for (const key of Object.keys(aliases).filter((k) => k !== "ip")) {
       const value = get(key);
       if (mode === "update" && !value) continue;
-      if (key === "accessMode") {
+      if (key === "zone") {
+        if (value && !["绿区", "蓝区", "green", "blue"].includes(value)) throw new Error(`第${i + 2}行：区域应为绿区或蓝区`);
+        out[key] = value === "绿区" ? "green" : value === "蓝区" ? "blue" : value;
+      } else if (key === "family") {
+        if (value && !["A3", "A5"].includes(value)) throw new Error(`第${i + 2}行：排期型号应为A3或A5`);
+        out[key] = value;
+      } else if (key === "accessMode") {
         if (!access[value])
           throw new Error(`第${i + 2}行：使用方式应为“裸机”或“灵枢平台”`);
         out[key] = access[value];

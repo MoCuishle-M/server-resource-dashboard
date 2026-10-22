@@ -75,6 +75,7 @@ import PartialCancelForm from "./partial-cancel-form";
 import RequestResourcePicker from "./request-resource-picker";
 import RequestAssignmentForm from "./request-assignment-form";
 import RequestExtensionForm from "./request-extension-form";
+import WeeklyPlanning from "./weekly-planning";
 import { extensionResourceIds } from "@/lib/request-extension";
 import { activeDialog, FeedbackContext, OperationFeedback, type OperationNotice } from "./operation-feedback";
 import { copyRequestDraft } from "@/lib/request-draft";
@@ -99,6 +100,7 @@ type View =
   | "overview"
   | "resources"
   | "schedule"
+  | "weekly"
   | "requests"
   | "groups"
   | "history"
@@ -107,6 +109,7 @@ const nav = [
   { id: "overview", label: "资源总览", icon: LayoutDashboard },
   { id: "resources", label: "服务器资源", icon: Server },
   { id: "schedule", label: "使用排期", icon: CalendarDays },
+  { id: "weekly", label: "每周需求与排期", icon: ClipboardList },
   { id: "requests", label: "申请与审批", icon: ClipboardList },
   { id: "groups", label: "团队与接口人", icon: Users },
   { id: "history", label: "变更历史", icon: History },
@@ -115,6 +118,7 @@ const nav = [
 const titles: Record<View, { title: string; sub: string }> = {
   overview: { title: "资源总览", sub: "让每一份算力，都有清晰的去向。" },
   resources: { title: "服务器资源", sub: "统一管理服务器清单与访问方式。" },
+  weekly: { title: "每周需求与排期", sub: "集中收集需求，协调资源分配，确认后统一发布。" },
   schedule: {
     title: "使用排期",
     sub: "按时间查看资源分配，协调每个团队的计划。",
@@ -578,7 +582,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   }
   function exportResources() {
     downloadCSV("服务器资源.csv", [
-      ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注", "灵枢平台状态", "状态", "隐藏", "故障说明"],
+      ["名称", "类型", "IP", "使用方式", "占用模式", "位置", "备注", "灵枢平台状态", "状态", "隐藏", "故障说明", "区域", "排期型号", "机柜"],
       ...filtered.map((r) => [
         r.name,
         r.type,
@@ -591,6 +595,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         resourceStatusLabels[r.status],
         r.hidden ? "是" : "否",
         r.faultDescription ?? "",
+        r.zone === "green" ? "绿区" : r.zone === "blue" ? "蓝区" : "",
+        r.family ?? "",
+        r.rack ?? "",
       ]),
     ]);
   }
@@ -694,6 +701,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 <td>
                   <span className="type-text">{r.type}</span>
                   <small>{r.location || "未填写位置"}</small>
+                  {(r.zone || r.family || r.rack) && <small>{r.zone === "green" ? "绿区" : r.zone === "blue" ? "蓝区" : "未登记区域"} · {r.family || "未登记型号"} · {r.rack || "未登记机柜"}</small>}
                 </td>
                 <td>
                   <Badge tone={r.accessMode === "lingshu" ? "blue" : "neutral"}>
@@ -1043,6 +1051,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   {admin && <button className="text-button" onClick={() => navigate("settings")}>编辑公告与签名</button>}
                 </section>
                 {view === "settings" && admin && <AdminSettings state={s} busy={busy} onAction={run} />}
+                {view === "weekly" && <WeeklyPlanning state={s} busy={busy} onAction={run} />}
                 {view === "overview" && (
                   <>
                     <section className="kpi-grid">
@@ -2091,6 +2100,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   placeholder="可选"
                 />
               </Field>
+              <Field label="排期区域"><select name="zone" defaultValue={editResource?.zone ?? ""}><option value="">未登记</option><option value="green">绿区</option><option value="blue">蓝区</option></select></Field>
+              <Field label="排期型号"><select name="family" defaultValue={editResource?.family ?? ""}><option value="">未登记</option><option value="A3">A3</option><option value="A5">A5</option></select></Field>
+              <Field label="机柜"><input name="rack" maxLength={80} defaultValue={editResource?.rack} placeholder="例如 A01；同柜判断结合机房位置" /></Field>
               <Field label="资源状态">
                 <select
                   name="status"
@@ -2189,6 +2201,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 { key: "lingshuStatus", label: "灵枢平台状态" },
                 { key: "sharingMode", label: "占用模式" },
                 { key: "location", label: "位置" },
+                { key: "zone", label: "区域" },
+                { key: "family", label: "排期型号" },
+                { key: "rack", label: "机柜" },
                 { key: "note", label: "备注" },
                 { key: "faultDescription", label: "故障说明" },
                 { key: "status", label: "资源状态" },
@@ -2210,7 +2225,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     {field.label}
                   </label>
                   <Field label={field.label}>
-                    {["accessMode", "lingshuStatus", "sharingMode", "status", "hidden"].includes(
+                    {["accessMode", "lingshuStatus", "sharingMode", "status", "hidden", "zone", "family"].includes(
                       field.key,
                     ) ? (
                       <select
@@ -2232,6 +2247,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               ["bare", "通过裸机使用"],
                               ["lingshu", "通过灵枢平台使用"],
                             ]
+                          : field.key === "zone" ? [["green", "绿区"], ["blue", "蓝区"]]
+                          : field.key === "family" ? [["A3", "A3"], ["A5", "A5"]]
                           : field.key === "lingshuStatus" ? Object.entries(lingshuStatusLabels)
                           : field.key === "sharingMode"
                             ? [
@@ -2392,6 +2409,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "灵枢平台状态",
                     "隐藏",
                     "故障说明",
+                    "区域",
+                    "排期型号",
+                    "机柜",
                   ],
                   [
                     "Atlas-示例-01",
@@ -2405,6 +2425,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     "",
                     "否",
                     "",
+                    "绿区",
+                    "A3",
+                    "A01",
                   ],
                 ])
               }
@@ -2533,6 +2556,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       <th>灵枢平台状态</th>
                       <th>隐藏</th>
                       <th>故障说明</th>
+                      <th>区域</th><th>排期型号</th><th>机柜</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2575,6 +2599,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <td>{r.lingshuStatus ? lingshuStatusLabels[r.lingshuStatus as keyof typeof lingshuStatusLabels] : importMode === "update" ? "保留原值" : r.accessMode === "lingshu" ? lingshuStatusLabels.platform : "—"}</td>
                         <td>{r.hidden === undefined ? importMode === "update" ? "保留原值" : "否" : r.hidden ? "是" : "否"}</td>
                         <td>{r.faultDescription || "—"}</td>
+                        <td>{r.zone === "green" ? "绿区" : r.zone === "blue" ? "蓝区" : importMode === "update" ? "保留原值" : "未登记"}</td>
+                        <td>{r.family || (importMode === "update" ? "保留原值" : "未登记")}</td>
+                        <td>{r.rack || (importMode === "update" ? "保留原值" : "未登记")}</td>
                       </tr>
                     ))}
                   </tbody>

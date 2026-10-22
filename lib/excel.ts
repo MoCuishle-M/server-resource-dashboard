@@ -55,6 +55,9 @@ export async function downloadResourceTemplate() {
     { header: "故障说明", key: "faultDescription", width: 40 },
     { header: "灵枢平台状态", key: "lingshuStatus", width: 38 },
     { header: "隐藏", key: "hidden", width: 18 },
+    { header: "区域", key: "zone", width: 12 },
+    { header: "排期型号", key: "family", width: 12 },
+    { header: "机柜", key: "rack", width: 18 },
   ];
   sheet.addRow({
     name: "Atlas-示例-01",
