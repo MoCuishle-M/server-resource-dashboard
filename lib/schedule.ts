@@ -1,4 +1,5 @@
 import type { Booking } from "./types";
+import { displayBookings } from "./priority";
 
 export type TimelineRange = { startAt: string; endAt: string };
 const hour = 3600000;
@@ -44,8 +45,7 @@ export function timelineTicks(range: TimelineRange) {
 
 export function layoutBookings(bookings: Booking[], range: TimelineRange) {
   const start = Date.parse(range.startAt), end = Date.parse(range.endAt);
-  const visible = bookings.filter(b =>
-    (b.status === "scheduled" || b.status === "released") &&
+  const visible = displayBookings(bookings).filter(b =>
     Date.parse(b.startAt) < end && Date.parse(b.endAt) > start,
   ).sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt) ||
     Date.parse(a.endAt) - Date.parse(b.endAt) || a.id.localeCompare(b.id));

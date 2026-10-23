@@ -606,7 +606,7 @@ test("switching shared back to exclusive blocks overlapping reservations and pre
   s = request(s);
   assert.throws(() => approve(s), /冲突/);
 });
-test("higher priority on shared resources never preempts existing users; mixed approvals only preempt exclusive resources", () => {
+test("shared priority preemption preserves reservations; mixed approval also splits exclusive reservations", () => {
   let s = setup();
   const sharedId = s.resources[0].id;
   s = apply(s, {
@@ -616,9 +616,9 @@ test("higher priority on shared resources never preempts existing users; mixed a
   });
   s = approve(request(s));
   const existing = s.bookings[0].id;
-  s = approve(
-    request(s, undefined, undefined, "urgent", { ...contact, groupId: "g2" }),
-  );
+  s = request(s, undefined, undefined, "urgent", { ...contact, groupId: "g2" });
+  assert.throws(() => approve(s), /确认抢占/);
+  s = apply(s, { type: "request.review", id: s.requests.at(-1)!.id, approve: true, preempt: true, note: "紧急任务" });
   assert.equal(s.bookings.find((b) => b.id === existing)!.status, "scheduled");
   s = apply(s, {
     type: "resource.save",
@@ -665,6 +665,51 @@ test("higher priority on shared resources never preempts existing users; mixed a
       (b) => b.resourceId === exclusiveId && b.status === "preempted",
     ),
   );
+});
+
+test("shared highest-priority peers use together, low reservations remain and resume after release", () => {
+  let s = setup();
+  s = apply(s, { type: "resource.save", id: s.resources[0].id, resource: { ...row, sharingMode: "shared" } });
+  s = approve(request(s));
+  const low = s.bookings[0];
+  s = request(s, partialRange.startAt, partialRange.endAt, "high", { ...contact, groupId: "g2" });
+  const high = s.requests.at(-1)!;
+  assert.throws(() => apply(s, { type: "request.review", id: high.id, approve: true, preempt: true }), /原因/);
+  s = apply(s, { type: "request.review", id: high.id, approve: true, preempt: true, note: "临时高优实验" });
+  assert.deepEqual(s.bookings.find(b => b.id === low.id), low);
+  s = request(s, partialRange.startAt, partialRange.endAt, "high", { ...contact, groupId: "g3" });
+  assert.equal(approvalConflicts(s, s.requests.at(-1)!).length, 0);
+  s = approve(s);
+  const during = "2026-10-20T05:00:00.000Z";
+  assert.deepEqual(currentResourceUsage(s, low.resourceId, during).groupIds.sort(), ["g2", "g3"]);
+  assert.deepEqual(currentResourceUsage(s, low.resourceId, partialRange.endAt).groupIds, ["g1"]);
+  assert.equal(groupUsage(s, "g1", "2026-10-20T10:00:00.000Z").hours, 7);
+  const releaseAt = "2026-10-20T05:00:00.000Z";
+  for (const r of s.requests.filter(r => r.priority === "high")) {
+    s = mutate(s, admin, { type: "request.cancel", id: r.id }, releaseAt);
+  }
+  assert.deepEqual(currentResourceUsage(s, low.resourceId, releaseAt).groupIds, ["g1"]);
+  assert.equal(groupUsage(s, "g1", "2026-10-20T10:00:00.000Z").hours, 8);
+});
+
+test("low priority can reserve under existing high priority without changing its usage rights", () => {
+  let s = setup();
+  s = apply(s, { type: "resource.save", id: s.resources[0].id, resource: { ...row, sharingMode: "shared" } });
+  s = approve(request(s, partialRange.startAt, partialRange.endAt, "high", { ...contact, groupId: "g2" }));
+  s = approve(request(s));
+  assert.equal(s.bookings.filter(b => b.status === "scheduled").length, 2);
+  assert.deepEqual(currentResourceUsage(s, s.resources[0].id, "2026-10-20T05:00:00.000Z").groupIds, ["g2"]);
+  assert.deepEqual(currentResourceUsage(s, s.resources[0].id, partialRange.endAt).groupIds, ["g1"]);
+});
+
+test("renewal cannot bypass priority coordination on a shared server", () => {
+  let s = setup();
+  s = apply(s, { type: "resource.save", id: s.resources[0].id, resource: { ...row, sharingMode: "shared" } });
+  s = approve(request(s, "2026-10-20T01:00:00.000Z", partialRange.startAt));
+  s = approve(request(s, partialRange.startAt, partialRange.endAt, "high", { ...contact, groupId: "g2" }));
+  const snapshot = structuredClone(s);
+  assert.throws(() => apply(s, { type: "request.extend", id: s.requests[0].id, endAt: partialRange.endAt, resourceIds: [s.resources[0].id] }), /延长时段已有预约/);
+  assert.deepEqual(s, snapshot);
 });
 test("sharing configuration is validated and table imports default to exclusive", () => {
   assert.equal(setup().resources[0].sharingMode, "exclusive");

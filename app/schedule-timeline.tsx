@@ -7,6 +7,7 @@ import { resourceSearch } from "@/lib/resource-search";
 import ResourceTypeFilter from "./resource-type-filter";
 import { calendarRange, customRange, layoutBookings, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
 import type { Booking, Group, Resource } from "@/lib/types";
+import { bookingAvailability, priorityLabel } from "@/lib/priority";
 
 const localInput = (iso: string) => new Date(Date.parse(iso) + 8 * 3600000).toISOString().slice(0, 16);
 const fullTime = (iso: string) => new Intl.DateTimeFormat("zh-CN", {
@@ -38,7 +39,8 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
   const matchesSearch = resourceSearch(search);
   const resourceTypes = [...new Set(resources.map(r => r.type))];
   const resourceRows = resources.filter(r => matchesSearch(r) && (types === null || types.includes(r.type)))
-    .map(resource => ({ resource, layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range) }))
+    .map(resource => ({ resource, layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id), range) }))
+    .map(row => ({ ...row, layout: { ...row.layout, bars: row.layout.bars.filter(b => !group || b.booking.groupId === group) } }))
     .filter(row => !group || row.layout.bars.length > 0);
   const currentPercent = (Date.parse(now) - Date.parse(range.startAt)) / span * 100;
   function switchMode(next: typeof mode) {
@@ -51,7 +53,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
     <div className="section-heading schedule-heading">
       <div>
         <h2>资源时间线</h2>
-        <p>色条按实际起止时间连续显示；共享任务分行展示。点击色条或服务器查看详情。</p>
+        <p>同级任务在共享服务器上共用；高优抢占重叠时段，低优保留排期。斜纹表示已排期但暂不可用，点击查看详情。</p>
       </div>
       <div className="schedule-modes" aria-label="排期查看方式">
         {([ ["week", "一周"], ["day", "单日"], ["range", "自定义范围"] ] as const).map(([key, label]) =>
@@ -109,16 +111,23 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
             {currentPercent >= 0 && currentPercent < 100 && <i className="timeline-now" style={{ left: `${currentPercent}%` }} title="当前时间" aria-hidden="true" />}
             {!layout.bars.length && <span className="timeline-empty">{r.status !== "available" ? resourceStatusLabels[r.status] : "暂无排期"}</span>}
             {layout.bars.map(({ booking: b, lane, left, width, continuesBefore, continuesAfter }) => {
-              const label = `${groupName(b.groupId)} · ${b.purpose} · ${fullTime(b.startAt)} — ${fullTime(b.endAt)}${b.status === "released" ? " · 已提前释放" : ""}`;
-              return <button key={b.id} className={`booking-chip timeline-booking color-${Number(b.groupId.slice(1)) % 5}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane} * var(--timeline-lane-height) + 6px)` }} title={label} aria-label={label} onClick={() => onDetail(r)} data-booking-id={b.id}>
-                <strong>{continuesBefore ? "‹ " : ""}{b.priority !== "normal" && <Zap size={11} />}{groupName(b.groupId)}{continuesAfter ? " ›" : ""}</strong><span className="timeline-purpose">{b.purpose}</span><small>{fullTime(b.startAt)} — {fullTime(b.endAt)}</small>
+              const visibleStart = Math.max(Date.parse(b.startAt), Date.parse(range.startAt));
+              const visibleEnd = Math.min(Date.parse(b.endAt), Date.parse(range.endAt));
+              const segments = bookingAvailability(b, bookings, resourceSharingMode(r) === "shared");
+              const blocked = segments.filter(s => (b.status === "preempted" || s.blockedBy.length) && Date.parse(s.startAt) < visibleEnd && Date.parse(s.endAt) > visibleStart);
+              const blockedDuration = blocked.reduce((sum, s) => sum + Math.min(visibleEnd, Date.parse(s.endAt)) - Math.max(visibleStart, Date.parse(s.startAt)), 0);
+              const status = blockedDuration >= visibleEnd - visibleStart ? "已排期 · 暂不可用" : blocked.length ? "部分时段被抢占" : segments.some(s => s.sharedWith.length) ? "同级共享 · 可用" : "可用";
+              const label = `${priorityLabel[b.priority]} · ${status} · ${groupName(b.groupId)} · ${b.purpose} · ${fullTime(b.startAt)} — ${fullTime(b.endAt)}${b.status === "released" ? " · 已提前释放" : ""}${blocked.map(s => `\n暂不可用：${fullTime(s.startAt)} — ${fullTime(s.endAt)}${s.blockedBy.length ? `，高优任务：${s.blockedBy.map(x => `${groupName(x.groupId)} · ${x.purpose}`).join("、")}` : "，已被高优任务抢占"}`).join("")}`;
+              return <button key={b.id} className={`booking-chip timeline-booking priority-${b.priority} ${blocked.length ? "has-blocked-time" : ""}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane} * var(--timeline-lane-height) + 6px)` }} title={label} aria-label={label} onClick={() => onDetail(r)} data-booking-id={b.id}>
+                {blocked.map(s => <i key={s.startAt} className="timeline-blocked-overlay" aria-hidden="true" style={{ left: `${(Math.max(visibleStart, Date.parse(s.startAt)) - visibleStart) / (visibleEnd - visibleStart) * 100}%`, width: `${(Math.min(visibleEnd, Date.parse(s.endAt)) - Math.max(visibleStart, Date.parse(s.startAt))) / (visibleEnd - visibleStart) * 100}%` }} />)}
+                <strong>{continuesBefore ? "‹ " : ""}{b.priority !== "normal" && <Zap size={11} />}{priorityLabel[b.priority]} · {groupName(b.groupId)}{continuesAfter ? " ›" : ""}</strong><span className="timeline-purpose">{b.purpose}</span><small className="timeline-availability">{b.status === "released" ? "已提前释放" : status}</small><small>{fullTime(b.startAt)} — {fullTime(b.endAt)}</small>
               </button>;
             })}
           </div>
           {layout.bars.length > 0 && <div className="timeline-caption-list">{layout.bars.map(({ booking: b }) =>
             <button key={b.id} className="timeline-caption" title={`${fullTime(b.startAt)} — ${fullTime(b.endAt)}`} onClick={() => onDetail(r)}>
               <i className={`dot group-${Number(b.groupId.slice(1)) % 5}`} />
-              <span>{groupName(b.groupId)} · {b.purpose}</span>
+              <span>{priorityLabel[b.priority]} · {groupName(b.groupId)} · {b.purpose}</span>
             </button>)}
           </div>}
           </td>
@@ -126,6 +135,6 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
       </table>
       {!resourceRows.length && <div className="empty"><Server size={28} /><h3>{resources.length ? "没有符合条件的排期资源" : "添加资源后即可查看排期"}</h3></div>}
     </div>
-    <div className="schedule-legend">{groups.map(g => <span key={g.id}><i className={`dot group-${Number(g.id.slice(1)) % 5}`} />{g.name}</span>)}</div>
+    <div className="schedule-legend priority-legend"><span><i className="priority-swatch normal" />普通</span><span><i className="priority-swatch high" />高优</span><span><i className="priority-swatch urgent" />紧急</span><span><i className="priority-swatch blocked" />斜纹：被抢占，排期保留</span><span>同级共用仅适用于共享服务器</span></div>
   </section>;
 }

@@ -73,6 +73,8 @@ import FontSizeControl from "./font-size-control";
 import AdminSettings from "./admin-settings";
 import PartialCancelForm from "./partial-cancel-form";
 import RequestResourcePicker from "./request-resource-picker";
+import RequestPriorityPreview from "./request-priority-preview";
+import { bookingAvailability, displayBookings } from "@/lib/priority";
 import RequestAssignmentForm from "./request-assignment-form";
 import RequestExtensionForm from "./request-extension-form";
 import WeeklyPlanning from "./weekly-planning";
@@ -1586,6 +1588,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                                   {statusLabel[r.status]}
                                 </Badge>
                                 {r.pendingExtension && <small className="orange-text">续期待审批 · 至 {fmt(r.pendingExtension.endAt)}</small>}
+                                {r.status === "approved" && requestBookings(r).some(b => b.endAt > clock &&
+                                  (b.status === "preempted" || (b.status === "scheduled" && resourceSharingMode(resources.find(x => x.id === b.resourceId)) === "shared" &&
+                                    bookingAvailability(b, s.bookings).some(segment => segment.endAt > clock && segment.blockedBy.length > 0)))) &&
+                                  <small className="orange-text">排期保留 · 有被抢占时段，详见详情</small>}
                                 {r.reviewNote && (
                                   <small
                                     title={r.reviewNote}
@@ -2745,7 +2751,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           >
             {copyNotice && <p className="notice request-copy-notice" role="status">{copyNotice}</p>}
             <div className="request-layout">
-              <RequestResourcePicker resources={resources} selected={requestResources} used={used} onChange={setRequestResources} />
+              <RequestResourcePicker resources={resources} selected={requestResources} used={used} onChange={setRequestResources}
+                bookings={s?.bookings ?? []} range={{ startAt: requestStart ? `${requestStart}:00+08:00` : "", endAt: requestEnd ? `${requestEnd}:00+08:00` : "" }} priority={priority as UsageRequest["priority"]} />
               <div className="request-fields">
                 <Field label="使用者 *">
                   <select
@@ -2829,6 +2836,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 </div>
                 <Field label="任务优先级">
                   <select
+                    aria-label="任务优先级"
                     value={priority}
                     onChange={(e) => setPriority(e.target.value)}
                   >
@@ -2851,6 +2859,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     onChange={(e) => setPurpose(e.target.value)}
                   />
                 </Field>
+                <RequestPriorityPreview resources={resources.filter(r => requestResources.includes(r.id))} bookings={s?.bookings ?? []} groups={s?.groups ?? []}
+                  startAt={requestStart ? `${requestStart}:00+08:00` : ""} endAt={requestEnd ? `${requestEnd}:00+08:00` : ""} priority={priority as UsageRequest["priority"]} />
               </div>
             </div>
             {requestFailure && <div ref={requestErrorRef} className="request-submit-error" role="alert" tabIndex={-1}>
@@ -2859,7 +2869,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             </div>}
             <div className="modal-footer">
               <span className="muted text-small">
-                共享服务器可并行使用；独占服务器审批时检查冲突。
+                共享服务器同级共用；高优抢占时，低优排期保留。
               </span>
               <span className="spacer" />
               <button
@@ -2940,11 +2950,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           </section>}
           {review.status !== "pending" && requestBookings(review).length > 0 && (
             <section aria-label="实际有效排期">
-              <h3 className="detail-section-title">实际有效排期</h3>
+              <h3 className="detail-section-title">排期与使用权</h3>
               <div className="booking-list">
-                {requestBookings(review).filter(b => ["scheduled", "released"].includes(b.status)).sort((a, b) => a.startAt.localeCompare(b.startAt)).map(b => (
-                  <div key={b.id}><div><strong>{resourceName(b.resourceId)}</strong><small>{fmt(b.startAt)} → {fmt(b.endAt)}</small></div><Badge tone={b.endAt > clock && b.status === "scheduled" ? "green" : "neutral"}>{b.endAt <= clock || b.status === "released" ? "已结束" : "有效"}</Badge></div>
-                ))}
+                {displayBookings(s?.bookings ?? []).filter(b => b.requestId === review.id).sort((a, b) => a.startAt.localeCompare(b.startAt)).flatMap(b =>
+                  bookingAvailability(b, s?.bookings ?? [], resourceSharingMode(resources.find(r => r.id === b.resourceId)) === "shared").map(segment => {
+                    const blocked = b.status === "preempted" || segment.blockedBy.length > 0;
+                    return <div key={`${b.id}:${segment.startAt}`}><div><strong>{resourceName(b.resourceId)} · {priorityLabel[b.priority]}</strong><small>{fmt(segment.startAt)} → {fmt(segment.endAt)}</small>{!!segment.blockedBy.length && <small>高优任务：{segment.blockedBy.map(x => `${groupName(x.groupId)} · ${x.purpose}`).join("、")}</small>}</div><Badge tone={blocked ? "orange" : "green"}>{blocked ? "已排期 · 暂不可用" : segment.endAt <= clock || b.status === "released" ? "已结束" : segment.sharedWith.length ? "同级共享 · 可用" : "可用"}</Badge></div>;
+                  }))}
                 {!requestBookings(review).some(b => ["scheduled", "released"].includes(b.status)) && <p className="muted">暂无有效排期</p>}
               </div>
               {canAdjust(review) && <button className="button small" onClick={() => openPartialCancel(review)}>取消部分时段</button>}
@@ -2952,6 +2964,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           )}
           {admin && review.status === "pending" && (
             <>
+              <RequestPriorityPreview resources={resources.filter(r => review.resourceIds.includes(r.id))} bookings={s?.bookings ?? []} groups={s?.groups ?? []}
+                startAt={review.startAt > clock ? review.startAt : clock} endAt={review.endAt} priority={review.priority} />
               {review.startAt < clock && review.endAt > clock && <p className="notice" role="status">申请开始时间已过，仍可审批。批准后从实际审批时刻起生效，至原结束时间；原申请时段与实际审批时间会保留。</p>}
               {review.endAt <= clock && <p className="notice danger" role="alert">申请结束时间已过，无法批准；仍可填写原因拒绝该申请。</p>}
               <div className="review-switch">
@@ -3412,18 +3426,21 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           {detail.status === "fault" && <p className="notice danger fault-note" role="status"><AlertTriangle size={18} />故障说明：{detail.faultDescription}</p>}
           <h3 className="detail-section-title">当前与未来预约</h3>
           <div className="booking-list">
-            {s.bookings
+            {displayBookings(s.bookings)
               .filter(
                 (b) =>
                   b.resourceId === detail.id &&
-                  b.status === "scheduled" &&
+                  (b.status === "scheduled" || b.status === "preempted") &&
                   b.endAt > clock,
               )
               .sort((a, b) => a.startAt.localeCompare(b.startAt))
-              .map((b) => (
+              .map((b) => { const segments = bookingAvailability(b, s.bookings, resourceSharingMode(detail) === "shared");
+                const blockedNow = b.status === "preempted" || segments.some(segment => segment.startAt <= clock && segment.endAt > clock && segment.blockedBy.length);
+                const blockedFuture = segments.some(segment => segment.endAt > clock && segment.blockedBy.length);
+                return (
                 <div key={b.id}>
-                  <Badge tone={b.startAt <= clock ? "orange" : "blue"}>
-                    {b.startAt <= clock ? "正在使用" : "待开始"}
+                  <Badge tone={blockedNow || blockedFuture ? "orange" : "blue"}>
+                    {blockedNow ? "已排期 · 暂不可用" : blockedFuture ? "部分时段被抢占" : b.startAt <= clock ? "正在使用" : "待开始"}
                   </Badge>
                   <div>
                     <strong>
@@ -3434,15 +3451,15 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       {priorityLabel[b.priority]}
                     </small>
                   </div>
-                  {s.requests.some(r => r.id === b.requestId && canAdjust(r)) && <button className="text-button orange-text" onClick={() => {
+                  {b.status === "scheduled" && s.requests.some(r => r.id === b.requestId && canAdjust(r)) && <button className="text-button orange-text" onClick={() => {
                     const r = s.requests.find(r => r.id === b.requestId);
                     if (r) openPartialCancel(r, b.resourceId);
                   }}>取消部分时段</button>}
-                  {s.requests.some(r => r.id === b.requestId && canReassign(r)) && <button className="text-button orange-text" onClick={() => {
+                  {b.status === "scheduled" && s.requests.some(r => r.id === b.requestId && canReassign(r)) && <button className="text-button orange-text" onClick={() => {
                     const r = s.requests.find(r => r.id === b.requestId);
                     if (r) openAssignment(r, b.resourceId);
                   }}>调整组与事项</button>}
-                  {s.requests.some(r => r.id === b.requestId && canExtend(r)) && <button className="text-button orange-text" onClick={() => {
+                  {b.status === "scheduled" && s.requests.some(r => r.id === b.requestId && canExtend(r)) && <button className="text-button orange-text" onClick={() => {
                     const r = s.requests.find(r => r.id === b.requestId); if (r) openExtension(r);
                   }}>延长使用</button>}
                   {s.requests.some(r => r.id === b.requestId) && <button
@@ -3458,11 +3475,11 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     申请详情
                   </button>}
                 </div>
-              ))}
-            {!s.bookings.some(
+              ); })}
+            {!displayBookings(s.bookings).some(
               (b) =>
                 b.resourceId === detail.id &&
-                b.status === "scheduled" &&
+                (b.status === "scheduled" || b.status === "preempted") &&
                 b.endAt > clock,
             ) && <p className="muted">暂无有效预约</p>}
           </div>

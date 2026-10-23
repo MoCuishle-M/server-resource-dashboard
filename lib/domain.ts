@@ -13,6 +13,8 @@ import { partialCancellationPlan } from "./booking-adjustment";
 import { extensionResourceIds } from "./request-extension";
 import { resourceStatusLabels, visibleResourceState } from "./resource-policy";
 import { applyWeeklyAction, visibleWeeklyState } from "./weekly-actions";
+import { bookingAvailability, displacesBooking, priorityRank } from "./priority";
+export { priorityLabel, priorityRank } from "./priority";
 export class DomainError extends Error {
   constructor(
     public status: number,
@@ -21,8 +23,6 @@ export class DomainError extends Error {
     super(message);
   }
 }
-export const priorityRank = { normal: 0, high: 1, urgent: 2 };
-export const priorityLabel = { normal: "普通", high: "高优", urgent: "紧急" };
 export const slots = [
   { label: "上午", start: "09:00", end: "12:00" },
   { label: "午间", start: "12:00", end: "14:00" },
@@ -61,7 +61,10 @@ export function overlaps(
 }
 export function activeBookings(s: State, now: string) {
   return s.bookings.filter(
-    (b) => b.status === "scheduled" && b.startAt <= now && b.endAt > now,
+    (b) => b.status === "scheduled" && b.startAt <= now && b.endAt > now &&
+      (resourceSharingMode(s.resources.find(r => r.id === b.resourceId)) !== "shared" ||
+        !s.bookings.some(other => other.resourceId === b.resourceId && other.status === "scheduled"
+          && other.startAt <= now && other.endAt > now && priorityRank[other.priority] > priorityRank[b.priority])),
   );
 }
 export function resourceSharingMode(resource?: Pick<Resource, "sharingMode">) {
@@ -74,8 +77,8 @@ export function approvalConflicts(s: State, request: UsageRequest, notBefore?: s
     (b) =>
       b.status === "scheduled" &&
       request.resourceIds.includes(b.resourceId) &&
-      resourceSharingMode(s.resources.find((r) => r.id === b.resourceId)) ===
-        "exclusive" &&
+      (resourceSharingMode(s.resources.find((r) => r.id === b.resourceId)) === "exclusive" ||
+        (priorityRank[b.priority] < priorityRank[request.priority] && displacesBooking(b, s.bookings, range))) &&
       overlaps(b, range),
   );
 }
@@ -111,10 +114,12 @@ export function groupUsage(s: State, groupId: string, now: string) {
     )
       continue;
     const ranges = byResource.get(b.resourceId) ?? [];
-    ranges.push({
-      start: Date.parse(b.startAt),
-      end: Math.min(Date.parse(b.endAt), Date.parse(now)),
-    });
+    for (const segment of bookingAvailability(b, s.bookings,
+      resourceSharingMode(s.resources.find(r => r.id === b.resourceId)) === "shared")) {
+      if (!segment.blockedBy.length && segment.startAt < now) ranges.push({
+        start: Date.parse(segment.startAt), end: Math.min(Date.parse(segment.endAt), Date.parse(now)),
+      });
+    }
     byResource.set(b.resourceId, ranges);
   }
   let elapsed = 0;
@@ -230,8 +235,9 @@ export function mutate(
     for (const id of resourceIds) {
       const resource = s.resources.find(x => x.id === id && !x.deleted);
       if (!resource || resource.status !== "available") fail("部分服务器故障、维护中、不可用或已删除，无法续期", 409);
-      if (resourceSharingMode(resource) === "exclusive" && s.bookings.some(b => b.resourceId === id
-        && b.status === "scheduled" && overlaps(b, { startAt, endAt })))
+      if (s.bookings.some(b => b.resourceId === id && b.requestId !== r.id
+        && b.status === "scheduled" && overlaps(b, { startAt, endAt })
+        && (resourceSharingMode(resource) === "exclusive" || priorityRank[b.priority] !== priorityRank[r.priority])))
         fail(`${resource.name} 在延长时段已有预约，请调整结束时间或先协调资源`, 409);
     }
     return { startAt, resourceIds };
@@ -763,6 +769,13 @@ export function mutate(
             fail("只能抢占优先级低于当前任务的预约", 409);
           for (const b of conflicts) {
             const old = { ...b };
+            if (resourceSharingMode(s.resources.find(x => x.id === b.resourceId)) === "shared") {
+              audit("高优任务抢占", "booking", b.id,
+                `${s.resources.find(x => x.id === b.resourceId)!.name}：低优排期保留，重叠时段暂不可用：${note}`,
+                old, { booking: b, blockedByRequestId: r.id, startAt: effectiveStart > b.startAt ? effectiveStart : b.startAt,
+                  endAt: r.endAt < b.endAt ? r.endAt : b.endAt });
+              continue;
+            }
             b.status = "preempted";
             b.updatedAt = now;
             if (b.startAt < effectiveStart)
