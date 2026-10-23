@@ -76,6 +76,7 @@ import RequestResourcePicker from "./request-resource-picker";
 import RequestPriorityPreview from "./request-priority-preview";
 import { bookingAvailability, displayBookings } from "@/lib/priority";
 import RequestAssignmentForm from "./request-assignment-form";
+import RequestPriorityForm from "./request-priority-form";
 import RequestExtensionForm from "./request-extension-form";
 import WeeklyPlanning from "./weekly-planning";
 import { extensionResourceIds } from "@/lib/request-extension";
@@ -229,6 +230,7 @@ function Modal({
   return (
     <dialog
       ref={ref}
+      aria-label={title}
       className={`modal ${wide ? "modal-wide" : ""}`}
       onCancel={onClose}
       onClick={(e) => {
@@ -331,6 +333,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   useEffect(() => { if (modal === "resource") setResourceStatus(editResource?.status ?? "available"); }, [modal, editResource]);
   useEffect(() => { setExtensionReviewNote(""); }, [review?.id, review?.pendingExtension?.id]);
   const [assignmentResourceId, setAssignmentResourceId] = useState<string | undefined>();
+  const [priorityRequest, setPriorityRequest] = useState<UsageRequest | null>(null);
+  const [priorityResourceId, setPriorityResourceId] = useState<string | undefined>();
   useEffect(() => {
     if (!s || s.actor.role === "admin") return;
     if (stateFilter === "hidden") setStateFilter("");
@@ -470,6 +474,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const canExtend = (r: UsageRequest) => canApply && (admin || actor.groupId === r.groupId)
     && r.status === "approved" && r.endAt > clock && (admin || !r.pendingExtension)
     && extensionResourceIds(r, s?.bookings ?? [], clock, false, s?.resources).length > 0;
+  const canChangePriority = (r: UsageRequest) => admin && r.status === "approved" && r.endAt > clock && !r.pendingExtension && remainingBookings(r).length > 0;
+  function openPriority(r: UsageRequest, resourceId?: string) {
+    setToast(null); setDetail(null); setReview(null); setPriorityResourceId(resourceId); setPriorityRequest(r);
+  }
   function openExtension(r: UsageRequest) {
     setToast(null); setDetail(null); setReview(null); setExtendRequest(r);
   }
@@ -1457,6 +1465,11 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     now={clock}
                     onDetail={setDetail}
                     onRequest={openRequest}
+                    onPriority={admin ? b => {
+                      const r = s.requests.find(r => r.id === b.requestId);
+                      if (r && canChangePriority(r) && b.status === "scheduled" && b.endAt > clock) openPriority(r, b.resourceId);
+                      else { const resource = s.resources.find(r => r.id === b.resourceId); if (resource) setDetail(resource); }
+                    } : undefined}
                   />
                 )}
                 {view === "requests" && (
@@ -1604,6 +1617,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               <td className="align-right">
                                 <div className="row-actions">
                                   {canReassign(r) && <button className="text-button orange-text" onClick={() => openAssignment(r)}>调整使用组与事项</button>}
+                                  {canChangePriority(r) && <button className="text-button orange-text" onClick={() => openPriority(r)}>调整优先级</button>}
                                   {canExtend(r) && <button className="text-button orange-text" onClick={() => openExtension(r)}>延长使用</button>}
                                   {admin && r.pendingExtension && <button className="text-button orange-text" onClick={() => setReview(r)}>审批续期</button>}
                                   {canApply && <button className="text-button" onClick={() => copyRequest(r)}><Copy size={13} />复制申请</button>}
@@ -3045,6 +3059,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             </button>
             {canApply && <button className="button" onClick={() => copyRequest(review)}><Copy size={14} />复制申请</button>}
             {canReassign(review) && <button className="button" onClick={() => openAssignment(review)}>调整使用组与事项</button>}
+            {canChangePriority(review) && <button className="button" onClick={() => openPriority(review)}>调整优先级</button>}
             {canExtend(review) && <button className="button" onClick={() => openExtension(review)}>延长使用</button>}
             {admin && review.status === "pending" && (
               <button
@@ -3097,6 +3112,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               setExtendRequest(null); navigate("requests"); setRequestFilter("all");
             }
           }} />
+      </Modal>}
+      {priorityRequest && admin && s && <Modal wide title="调整排期优先级" sub={`${groupName(priorityRequest.groupId)} · ${priorityRequest.purpose}`} onClose={() => setPriorityRequest(null)}>
+        <RequestPriorityForm request={s.requests.find(r => r.id === priorityRequest.id) ?? priorityRequest} bookings={s.bookings} resources={s.resources} groups={s.groups} clock={clock} busy={busy} initialResourceId={priorityResourceId}
+          onClose={() => setPriorityRequest(null)} onConfirm={async value => { if (await run({ type: "request.changePriority", id: priorityRequest.id, ...value }, "优先级已调整，排期使用权已更新")) setPriorityRequest(null); }} />
       </Modal>}
       {assignmentRequest && admin && s && (
         <Modal wide title="调整使用组与事项" sub={`${groupName(assignmentRequest.groupId)} · ${assignmentRequest.purpose} · ${fmt(assignmentRequest.startAt)} → ${fmt(assignmentRequest.endAt)}`}
@@ -3459,6 +3478,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     const r = s.requests.find(r => r.id === b.requestId);
                     if (r) openAssignment(r, b.resourceId);
                   }}>调整组与事项</button>}
+                  {b.status === "scheduled" && s.requests.some(r => r.id === b.requestId && canChangePriority(r)) && <button className="text-button orange-text" onClick={() => { const r = s.requests.find(r => r.id === b.requestId); if (r) openPriority(r, b.resourceId); }}>调整优先级</button>}
                   {b.status === "scheduled" && s.requests.some(r => r.id === b.requestId && canExtend(r)) && <button className="text-button orange-text" onClick={() => {
                     const r = s.requests.find(r => r.id === b.requestId); if (r) openExtension(r);
                   }}>延长使用</button>}

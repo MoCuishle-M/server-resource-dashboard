@@ -52,7 +52,7 @@ try {
   await page.screenshot({ path: "outputs/priority/timeline.png", fullPage: true });
   await page.getByLabel("排期组筛选").selectOption("g1");
   assert.equal(await low.locator(".timeline-blocked-overlay").count(), 1);
-  await low.click();
+  await page.locator(".schedule-server .resource-name").click();
   assert.match(await page.getByRole("dialog").innerText(), /部分时段被抢占|暂不可用/);
   await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).first().click();
   await page.getByLabel("排期组筛选").selectOption("");

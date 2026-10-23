@@ -12,7 +12,15 @@ export function displayBookings(bookings: Booking[]) {
     if (b.status === "scheduled" || b.status === "released") return [b];
     if (b.status !== "preempted") return [];
     let ranges: Range[] = [b];
-    for (const child of bookings.filter(c => c.parentId === b.id)) {
+    const descendants = new Set([b.id]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const child of bookings) if (descendants.has(child.parentId) && !descendants.has(child.id)) {
+        descendants.add(child.id); changed = true;
+      }
+    }
+    for (const child of bookings.filter(c => c.id !== b.id && descendants.has(c.id))) {
       ranges = ranges.flatMap(r => !intersects(r, child) ? [r] : [
         ...(r.startAt < child.startAt ? [{ startAt: r.startAt, endAt: child.startAt }] : []),
         ...(r.endAt > child.endAt ? [{ startAt: child.endAt, endAt: r.endAt }] : []),

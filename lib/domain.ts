@@ -13,7 +13,8 @@ import { partialCancellationPlan } from "./booking-adjustment";
 import { extensionResourceIds } from "./request-extension";
 import { resourceStatusLabels, visibleResourceState } from "./resource-policy";
 import { applyWeeklyAction, visibleWeeklyState } from "./weekly-actions";
-import { bookingAvailability, displacesBooking, priorityRank } from "./priority";
+import { bookingAvailability, displacesBooking, priorityLabel, priorityRank } from "./priority";
+import { priorityAdjustmentPlan } from "./priority-adjustment";
 export { priorityLabel, priorityRank } from "./priority";
 export class DomainError extends Error {
   constructor(
@@ -867,6 +868,51 @@ export function mutate(
       } else delete r.pendingExtension;
       audit(action.approve ? "批准续期申请" : "拒绝续期申请", "request", [r.id, ...extension.resourceIds].join(","),
         `${r.purpose} 续期${action.approve ? "批准" : "拒绝"}${note ? `：${note}` : ""}`, before, r);
+      break;
+    }
+    case "request.changePriority": {
+      needAdmin();
+      const r = findRequest();
+      if (r.status !== "approved" || r.endAt <= now) fail("只能调整尚未结束的已批准排期", 409);
+      if (r.pendingExtension) fail("请先处理待审批续期申请，再调整优先级", 409);
+      if (!["normal", "high", "urgent"].includes(action.priority as string)) fail("优先级不正确");
+      const priority = action.priority as Priority;
+      if (r.priority === priority) fail("优先级未发生变化");
+      const resourceIds = ids(action.resourceIds, "需要调整的服务器");
+      if (resourceIds.some(id => !r.resourceIds.includes(id))) fail("只能调整该申请中的服务器");
+      if (resourceIds.some(id => !s.resources.some(resource => resource.id === id && !resource.deleted)))
+        fail("部分服务器已删除，请刷新后重试", 409);
+      if (resourceIds.some(id => !s.bookings.some(b => b.requestId === r.id && b.resourceId === id && b.status === "scheduled" && b.endAt > now)))
+        fail("部分服务器已无剩余排期，请重新选择", 409);
+      const note = text(action.note, "调整原因", 1000);
+      if (action.confirm !== true) fail("请确认优先级调整及使用权变化", 409);
+      const before = structuredClone(r);
+      const selected = new Set(resourceIds);
+      const bookings = s.bookings.filter(b => b.requestId === r.id && selected.has(b.resourceId));
+      const oldBookings = structuredClone(bookings);
+      const plan = priorityAdjustmentPlan(s.bookings, r.id, resourceIds, priority, now);
+      if (!plan.length) fail("所选服务器已无可调整的排期", 409);
+      let target = r;
+      if (resourceIds.length < r.resourceIds.length) {
+        target = { ...r, id: crypto.randomUUID(), sourceRequestId: r.sourceRequestId ?? r.id,
+          resourceIds: r.resourceIds.filter(id => selected.has(id)) };
+        r.resourceIds = r.resourceIds.filter(id => !selected.has(id));
+        s.requests.push(target);
+        for (const b of bookings) b.requestId = target.id;
+      }
+      target.priority = priority;
+      for (const { booking: b, startAt } of plan) {
+        if (b.startAt < now) {
+          const future = { ...b, id: crypto.randomUUID(), startAt, priority, parentId: b.id, createdAt: now, updatedAt: now };
+          b.endAt = now;
+          b.updatedAt = now;
+          s.bookings.push(future);
+        } else Object.assign(b, { priority, updatedAt: now });
+      }
+      audit("调整排期优先级", "request", [...new Set([r.id, target.id, ...resourceIds])].join(","),
+        `${target.purpose}：${resourceIds.length}台服务器优先级 ${priorityLabel[before.priority]} → ${priorityLabel[priority]}，从调整时刻起作用于剩余排期：${note}`,
+        { request: before, bookings: oldBookings }, { source: r, request: target, effectiveAt: now,
+          bookings: s.bookings.filter(b => b.requestId === target.id && selected.has(b.resourceId)), note });
       break;
     }
     case "request.reassign": {
