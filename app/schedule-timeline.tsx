@@ -1,6 +1,7 @@
 "use client";
-import { useState } from "react";
-import { ChevronLeft, ChevronRight, Plus, Search, Server, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Popover } from "radix-ui";
+import { ChevronLeft, ChevronRight, Plus, Search, Server, SlidersHorizontal, ListFilter } from "lucide-react";
 import { chinaDate, resourceSharingMode } from "@/lib/domain";
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import { resourceSearch } from "@/lib/resource-search";
@@ -14,6 +15,14 @@ const fullTime = (iso: string) => new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
   hour: "2-digit", minute: "2-digit", hour12: false,
 }).format(new Date(iso));
+const resourceFields = [
+  ["family", "类型"], ["zone", "区域"], ["ip", "IP"], ["name", "服务器名称"],
+  ["type", "硬件规格"], ["access", "使用方式"], ["sharing", "共享方式"],
+  ["rack", "机柜"], ["location", "位置"], ["note", "备注"], ["status", "资源状态"],
+] as const;
+type ResourceField = typeof resourceFields[number][0];
+const defaultFields: ResourceField[] = ["family", "zone", "ip"];
+const fieldStorageKey = "schedule-resource-fields-v1";
 
 export default function ScheduleTimeline({ resources, bookings, groups, now, onDetail, onRequest, onPriority }: {
   resources: Resource[];
@@ -29,6 +38,22 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
   const [search, setSearch] = useState("");
   const [types, setTypes] = useState<string[] | null>(null);
   const [group, setGroup] = useState("");
+  const [family, setFamily] = useState("");
+  const [zone, setZone] = useState("");
+  const [fields, setFields] = useState<ResourceField[]>(defaultFields);
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(fieldStorageKey) ?? "null");
+      if (Array.isArray(stored)) {
+        const valid = resourceFields.map(([key]) => key).filter(key => stored.includes(key));
+        if (valid.length) setFields(valid);
+      }
+    } catch { /* Storage may be unavailable in private browsing. */ }
+  }, []);
+  function updateFields(next: ResourceField[]) {
+    setFields(next);
+    try { localStorage.setItem(fieldStorageKey, JSON.stringify(next)); } catch { /* Keep the current view usable. */ }
+  }
   const [applied, setApplied] = useState(() => calendarRange(chinaDate(), "week"));
   const [start, setStart] = useState(() => localInput(applied.startAt));
   const [end, setEnd] = useState(() => localInput(applied.endAt));
@@ -39,10 +64,20 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
   const groupName = (id: string) => groups.find(g => g.id === id)?.name ?? "历史团队";
   const matchesSearch = resourceSearch(search);
   const resourceTypes = [...new Set(resources.map(r => r.type))];
-  const resourceRows = resources.filter(r => matchesSearch(r) && (types === null || types.includes(r.type)))
-    .map(resource => ({ resource, layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id), range) }))
-    .map(row => ({ ...row, layout: { ...row.layout, bars: row.layout.bars.filter(b => !group || b.booking.groupId === group) } }))
+  const resourceRows = resources.filter(r => matchesSearch(r) && (types === null || types.includes(r.type))
+    && (!family || (r.family || "unset") === family) && (!zone || (r.zone || "unset") === zone))
+    .map(resource => ({ resource, layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range) }))
     .filter(row => !group || row.layout.bars.length > 0);
+  const fieldValue = (r: Resource, field: ResourceField) => {
+    switch (field) {
+      case "family": return r.family || "未登记类型";
+      case "zone": return r.zone === "green" ? "绿区" : r.zone === "blue" ? "蓝区" : "未登记区域";
+      case "access": return r.accessMode === "bare" ? "裸机" : "灵枢平台";
+      case "sharing": return resourceSharingMode(r) === "shared" ? "共享" : "独占";
+      case "status": return resourceStatusLabels[r.status];
+      default: return r[field] || "未登记";
+    }
+  };
   const currentPercent = (Date.parse(now) - Date.parse(range.startAt)) / span * 100;
   function switchMode(next: typeof mode) {
     if (next === "range" && mode !== "range") {
@@ -79,20 +114,36 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
       {error && <p className="schedule-error" role="alert">{error}</p>}
       <p className="schedule-range-label" data-start={range.startAt} data-end={range.endAt}>{fullTime(range.startAt)} — {fullTime(range.endAt)} · 北京时间（结束时刻不含在范围内）</p>
     </div>
-    <div className="filters">
-      <div className="search"><Search size={16} /><textarea aria-label="搜索排期资源" aria-describedby="schedule-search-help" placeholder="搜索名称、IP、类型、位置或备注；支持多个IP" rows={2} value={search} onChange={e => setSearch(e.target.value)} /></div>
-      <ResourceTypeFilter types={resourceTypes} selected={types} onChange={setTypes} label="排期类型筛选" />
-      <select aria-label="排期组筛选" value={group} onChange={e => setGroup(e.target.value)}>
-        <option value="">全部团队</option>
-        {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+    <div className="filters schedule-filters">
+      <select aria-label="排期型号筛选" value={family} onChange={e => setFamily(e.target.value)}>
+        <option value="">全部类型</option><option value="A3">A3</option><option value="A5">A5</option><option value="unset">未登记类型</option>
       </select>
-      <span className="muted text-small">{resourceRows.length} 台服务器 · 申请时可选预设时段</span>
+      <select aria-label="排期区域筛选" value={zone} onChange={e => setZone(e.target.value)}>
+        <option value="">全部区域</option><option value="blue">蓝区</option><option value="green">绿区</option><option value="unset">未登记区域</option>
+      </select>
+      <div className="search"><Search size={16} /><textarea aria-label="搜索排期资源" aria-describedby="schedule-search-help" placeholder="输入 IP，支持多个 IP" rows={1} value={search} onChange={e => setSearch(e.target.value)} /></div>
+      <Popover.Root><Popover.Trigger asChild><button className={`button ${(group || types !== null) ? "is-filtered" : ""}`}><ListFilter size={14} />更多筛选{(group || types !== null) ? " · 已启用" : ""}</button></Popover.Trigger>
+        <Popover.Portal><Popover.Content className="schedule-options-popup" align="start" sideOffset={7} collisionPadding={12} aria-label="更多排期筛选">
+          <h3>更多筛选</h3><label>使用组<select aria-label="排期组筛选" value={group} onChange={e => setGroup(e.target.value)}><option value="">全部团队</option>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
+          <label>硬件规格<ResourceTypeFilter types={resourceTypes} selected={types} onChange={setTypes} label="排期类型筛选" /></label>
+          <button className="text-button" onClick={() => { setTypes(null); setGroup(""); }}>重置更多筛选</button>
+        </Popover.Content></Popover.Portal>
+      </Popover.Root>
+      <Popover.Root><Popover.Trigger asChild><button className="button"><SlidersHorizontal size={14} />显示信息</button></Popover.Trigger>
+        <Popover.Portal><Popover.Content className="schedule-options-popup" align="end" sideOffset={7} collisionPadding={12} aria-label="排期显示信息">
+          <h3>服务器显示信息</h3><p>至少保留一项，选择会在此浏览器中记住。</p>
+          <div className="schedule-field-options">{resourceFields.map(([key, label]) => <label key={key}><input type="checkbox" checked={fields.includes(key)} disabled={fields.length === 1 && fields.includes(key)} onChange={e => updateFields(e.target.checked ? resourceFields.map(([id]) => id).filter(id => id === key || fields.includes(id)) : fields.filter(id => id !== key))} />{label}</label>)}</div>
+          <button className="text-button" onClick={() => updateFields(defaultFields)}>恢复默认</button>
+        </Popover.Content></Popover.Portal>
+      </Popover.Root>
+      <span className="muted text-small">{resourceRows.length} / {resources.length} 台</span>
+      {(search || family || zone || group || types !== null) && <button className="text-button" onClick={() => { setSearch(""); setFamily(""); setZone(""); setGroup(""); setTypes(null); }}>清除筛选</button>}
     </div>
-    <p id="schedule-search-help" className="resource-search-help">多个IP可用空格、英文逗号或换行分隔，匹配任意一个IP；可叠加服务器类型和团队筛选。</p>
+    <p id="schedule-search-help" className="resource-search-help">多个 IP 用空格、逗号或换行分隔；也可搜索名称、规格、位置或备注。悬停排期查看完整理由和起止时间。</p>
     <div className="table-scroll schedule-scroll" tabIndex={0} aria-label="连续时间排期表，可横向滚动">
       <table className="schedule-table" aria-label="服务器连续时间排期">
         <colgroup><col className="schedule-server-col" /><col /></colgroup>
-        <thead><tr><th scope="col">服务器 / 使用方式</th><th scope="col" className="timeline-header">
+        <thead><tr><th scope="col">{resourceFields.filter(([key]) => fields.includes(key)).map(([, label]) => label).join(" · ")}</th><th scope="col" className="timeline-header">
           <div className="timeline-axis" aria-label="连续时间刻度">
             {ticks.map((tick, i) => <span key={tick.at} className={`timeline-tick ${i === ticks.length - 1 ? "last" : ""}`} style={{ left: `${tick.percent}%` }}>
               <strong>{new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit" }).format(new Date(tick.at))}</strong>
@@ -104,8 +155,8 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
         </th></tr></thead>
         <tbody>{resourceRows.map(({ resource: r, layout }) => <tr key={r.id}>
           <td className="schedule-server">
-            <button className="resource-name" onClick={() => onDetail(r)}><span className="server-icon"><Server size={16} /></span><span><strong>{r.name}</strong><small>{r.accessMode === "bare" ? "裸机" : "灵枢平台"} · {resourceSharingMode(r) === "shared" ? "共享" : "独占"}</small><small>{r.ip}</small></span></button>
-            <button className="text-button schedule-apply" disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={12} />{r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请"}</button>
+            <div className="schedule-resource-line"><button className="schedule-resource-info" aria-label={`查看服务器 ${r.ip} 详情`} onClick={() => onDetail(r)}>{fields.map(field => <span key={field} className={`schedule-field schedule-field-${field}`} title={`${resourceFields.find(([key]) => key === field)![1]}：${fieldValue(r, field)}`}>{fieldValue(r, field)}</span>)}</button>
+            <button className="icon-button schedule-apply" aria-label="申请" title={r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请此服务器"} disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={14} /></button></div>
           </td>
           <td className="timeline-cell"><div className="timeline-track" style={{ height: `calc(${layout.lanes} * var(--timeline-lane-height) + 12px)` }}>
             {ticks.map(tick => <i key={tick.at} className="timeline-gridline" style={{ left: `${tick.percent}%` }} aria-hidden="true" />)}
@@ -122,16 +173,11 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
               const editable = !!onPriority && b.status === "scheduled" && b.endAt > now;
               return <button key={b.id} className={`booking-chip timeline-booking priority-${b.priority} ${blocked.length ? "has-blocked-time" : ""}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane} * var(--timeline-lane-height) + 6px)` }} title={`${label}${editable ? "\n点击调整优先级" : ""}`} aria-label={label} onClick={() => editable ? onPriority!(b) : onDetail(r)} data-booking-id={b.id}>
                 {blocked.map(s => <i key={s.startAt} className="timeline-blocked-overlay" aria-hidden="true" style={{ left: `${(Math.max(visibleStart, Date.parse(s.startAt)) - visibleStart) / (visibleEnd - visibleStart) * 100}%`, width: `${(Math.min(visibleEnd, Date.parse(s.endAt)) - Math.max(visibleStart, Date.parse(s.startAt))) / (visibleEnd - visibleStart) * 100}%` }} />)}
-                <strong>{continuesBefore ? "‹ " : ""}{b.priority !== "normal" && <Zap size={11} />}{priorityLabel[b.priority]} · {groupName(b.groupId)}{continuesAfter ? " ›" : ""}</strong><span className="timeline-purpose">{b.purpose}</span><small className="timeline-availability">{b.status === "released" ? "已提前释放" : status}</small><small>{fullTime(b.startAt)} — {fullTime(b.endAt)}</small>
+                <span className="timeline-summary">{continuesBefore ? "‹ " : ""}<strong>{groupName(b.groupId)}</strong><span> · {b.purpose}</span>{continuesAfter ? " ›" : ""}</span>
+                {(blocked.length > 0 || b.status === "released") && <small className="timeline-availability">{b.status === "released" ? "已提前释放" : status}</small>}
               </button>;
             })}
           </div>
-          {layout.bars.length > 0 && <div className="timeline-caption-list">{layout.bars.map(({ booking: b }) =>
-            <button key={b.id} className="timeline-caption" title={`${fullTime(b.startAt)} — ${fullTime(b.endAt)}`} onClick={() => onDetail(r)}>
-              <i className={`dot group-${Number(b.groupId.slice(1)) % 5}`} />
-              <span>{priorityLabel[b.priority]} · {groupName(b.groupId)} · {b.purpose}</span>
-            </button>)}
-          </div>}
           </td>
         </tr>)}</tbody>
       </table>

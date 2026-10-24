@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 const base = process.env.BASE_URL ?? "http://127.0.0.1:5173";
 const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
-const browser = await chromium.launch({ headless: true, channel: "chromium", args: ["--no-sandbox"],
+const browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL ?? "chrome", args: ["--no-sandbox"],
   ...(proxy && !/^http:\/\/(127\.0\.0\.1|localhost)/.test(base) ? { proxy: { server: proxy } } : {}),
 });
 try {
@@ -34,12 +34,46 @@ try {
   await approve("QA跨周共享", "2026-10-24T00:15", "2026-10-26T03:00", "g2");
   await approve("VLLM组常态占用", "2026-10-22T00:00", "2026-11-01T00:00", "g1");
   await page.getByRole("button", { name: "使用排期", exact: true }).click();
+  const moreFilters = page.getByRole("button", { name: /^更多筛选/ });
+  async function showMoreFilters() {
+    if (!await page.getByLabel("排期组筛选").isVisible()) await moreFilters.click();
+  }
+  async function selectGroup(value) {
+    await showMoreFilters();
+    await page.getByLabel("排期组筛选").selectOption(value);
+    await page.keyboard.press("Escape");
+  }
   const scheduleSearch = page.getByLabel("搜索排期资源");
   const scheduleRows = page.locator(".schedule-table tbody tr");
+  assert.equal(await scheduleRows.count(), 16);
+  assert.equal(await scheduleRows.first().locator(".schedule-field-name").count(), 0);
+  assert.deepEqual(await scheduleRows.first().locator(".schedule-field").allTextContents(), ["A3", "绿区", "192.0.2.11"]);
+  const compactHeight = await scheduleRows.nth(1).evaluate(e => e.getBoundingClientRect().height);
+  assert(compactHeight <= 60, `single-lane row too tall: ${compactHeight}`);
+  await page.getByLabel("排期型号筛选").selectOption("A5");
+  assert.equal(await scheduleRows.count(), 6);
+  await page.getByLabel("排期区域筛选").selectOption("blue");
+  assert.equal(await scheduleRows.count(), 4);
+  await scheduleSearch.fill("192.0.2.23 192.0.2.11");
+  assert.equal(await scheduleRows.count(), 1);
+  await page.getByRole("button", { name: "清除筛选", exact: true }).click();
+  await page.getByRole("button", { name: "显示信息", exact: true }).click();
+  let infoPanel = page.getByRole("dialog", { name: "排期显示信息" });
+  await infoPanel.getByRole("checkbox", { name: "服务器名称", exact: true }).check();
+  await page.keyboard.press("Escape");
+  assert.equal(await scheduleRows.first().locator(".schedule-field-name").innerText(), "Atlas-910B-01");
+  await page.getByRole("button", { name: "资源总览", exact: true }).click();
+  await page.getByRole("button", { name: "使用排期", exact: true }).click();
+  assert.equal(await scheduleRows.first().locator(".schedule-field-name").count(), 1);
+  await page.getByRole("button", { name: "显示信息", exact: true }).click();
+  await infoPanel.getByRole("button", { name: "恢复默认", exact: true }).click();
+  await page.keyboard.press("Escape");
+  assert.equal(await scheduleRows.first().locator(".schedule-field-name").count(), 0);
   for (const separator of [" ", ",", "\n", ", \n"]) {
     await scheduleSearch.fill(`192.0.2.11${separator}192.0.2.21${separator}192.0.2.11`);
     assert.equal(await scheduleRows.count(), 2);
   }
+  await showMoreFilters();
   await page.getByRole("button", { name: "排期类型筛选", exact: true }).click();
   let typePanel = page.getByRole("dialog", { name: "排期类型筛选", exact: true });
   await typePanel.getByRole("button", { name: "清空", exact: true }).click();
@@ -60,9 +94,9 @@ try {
   await typePanel.getByLabel("全选类型", { exact: true }).check();
   await typePanel.getByRole("button", { name: "确定", exact: true }).click();
   assert.equal(await scheduleRows.count(), 2);
-  await page.getByLabel("排期组筛选").selectOption("g1");
+  await selectGroup("g1");
   assert.equal(await scheduleRows.count(), 1);
-  await page.getByLabel("排期组筛选").selectOption("");
+  await selectGroup("");
   await scheduleSearch.fill("192.0.2.1");
   assert.equal(await scheduleRows.count(), 0); // Exact IP must not match .11.
   await scheduleSearch.fill("北京 · A02机柜");
@@ -80,13 +114,14 @@ try {
   const persistent = page.locator(".timeline-booking").filter({ hasText: "VLLM组常态占用" });
   async function assertPurposeReadable(bar, fullText = false) {
     const box = await bar.evaluate(e => {
-      const purpose = e.querySelector(".timeline-purpose");
+      const purpose = e.querySelector(".timeline-summary");
       const b = e.getBoundingClientRect(), p = purpose.getBoundingClientRect();
       return { barTop: b.top, barBottom: b.bottom, top: p.top, bottom: p.bottom, height: p.height,
         lineHeight: parseFloat(getComputedStyle(purpose).lineHeight), client: purpose.clientHeight, scroll: purpose.scrollHeight };
     });
     assert(box.height >= box.lineHeight - 1, `purpose compressed to ${box.height}px`);
     assert(box.top >= box.barTop && box.bottom <= box.barBottom, "purpose extends outside the bar");
+    assert.match(await bar.getAttribute("title"), /2026/);
     if (fullText) assert(box.scroll <= box.client + 1, "wide bar truncates the purpose");
   }
   for (const size of ["100", "115", "130", "150"]) {
@@ -96,8 +131,9 @@ try {
     const boxes = await Promise.all([overnight, shared, persistent].map(bar => bar.boundingBox()));
     for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++)
       assert(boxes[i].y + boxes[i].height <= boxes[j].y || boxes[j].y + boxes[j].height <= boxes[i].y, "shared lane text overlaps");
-    const caption = page.locator(".timeline-caption span").filter({ hasText: longPurpose });
-    assert(await caption.evaluate(e => getComputedStyle(e).whiteSpace === "normal" && e.scrollWidth <= e.clientWidth + 1 && e.getBoundingClientRect().height > parseFloat(getComputedStyle(e).lineHeight)), "long caption is clipped instead of wrapping");
+    assert((await overnight.getAttribute("title")).includes(longPurpose), "full reason missing from tooltip");
+    assert.match(await persistent.locator(".timeline-summary").innerText(), / · VLLM组常态占用/);
+    assert.equal(await page.locator(".timeline-caption").count(), 0);
   }
   await page.screenshot({ path: "outputs/schedule-readable-text-desktop.png", fullPage: true });
   await page.getByLabel("网页字号").selectOption("130");
@@ -129,17 +165,18 @@ try {
   assert.equal(a.width, 100);
   assert.equal(b.left, 50);
   assert.equal(b.width, 50);
-  await page.getByLabel("排期组筛选").selectOption("g2");
+  await selectGroup("g2");
   assert.equal(await page.locator(".schedule-table tbody tr").count(), 1);
   assert.equal(await overnight.count(), 0);
   assert.equal(await shared.count(), 1);
+  assert.match((await position(shared)).top, /^calc\(0 /, "filtered bookings must start in the first lane");
   await page.getByLabel("排期结束时间", { exact: true }).fill("2026-10-23T20:00");
   await page.getByRole("button", { name: "查看范围", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "结束时间必须晚于开始时间" }).waitFor();
   assert.equal(await label.getAttribute("data-end"), "2026-10-23T16:45:00.000Z");
-  await page.getByLabel("排期组筛选").selectOption("");
+  await selectGroup("");
   await page.getByLabel("搜索排期资源").fill("Atlas-910B-01");
-  await page.getByRole("row").filter({ hasText: "Atlas-910B-01" }).getByRole("button", { name: "申请", exact: true }).click();
+  await page.getByRole("row").filter({ hasText: "192.0.2.11" }).getByRole("button", { name: "申请", exact: true }).click();
   const d = page.getByRole("dialog");
   assert.equal(await d.getByLabel("开始时间 *", { exact: true }).inputValue(), "2026-10-23T23:45");
   assert.equal(await d.getByLabel("结束时间 *", { exact: true }).inputValue(), "2026-10-24T00:45");
@@ -157,16 +194,18 @@ try {
   await page.getByLabel("搜索排期资源").fill("");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByLabel("网页字号").selectOption("150");
+  await showMoreFilters();
   await page.getByRole("button", { name: "排期类型筛选", exact: true }).click();
   typePanel = page.getByRole("dialog", { name: "排期类型筛选", exact: true });
   const typeBounds = await typePanel.boundingBox();
   assert(typeBounds.x >= 0 && typeBounds.x + typeBounds.width <= 390);
   await typePanel.getByRole("button", { name: "取消", exact: true }).click();
+  await page.keyboard.press("Escape");
   await assertPurposeReadable(persistent, true);
   await assertPurposeReadable(overnight);
   await page.screenshot({ path: "outputs/schedule-readable-text-mobile.png", fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({ path: "outputs/schedule-week.png", fullPage: true });
   assert.deepEqual(errors, []);
-  console.log("PASS: timeline type multiselect and draft/empty/all states, batch IP separators/exact matching, combined group filtering, location search, week/day/range, readable purpose text at four font sizes and mobile popup/layout");
+  console.log("PASS: compact rows, default/custom/persisted fields, family/zone/IP filters, advanced type/team filters, packed lanes, week/day/range, inline group/reason and full tooltips, four font sizes and mobile layout");
 } finally { await browser.close(); }

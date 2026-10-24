@@ -48,8 +48,8 @@ try {
   await d.getByLabel("调整优先级原因").fill("与重点一同级共用");
   await d.getByRole("checkbox", { name: /确认调整优先级/ }).check();
   await d.getByRole("button", { name: "保存优先级", exact: true }).click(); await d.waitFor({ state: "hidden" });
-  assert.match(await bar("QA手调重点一").innerText(), /同级共享 · 可用/);
-  assert.match(await bar("QA手调重点二").innerText(), /同级共享 · 可用/);
+  assert.match(await bar("QA手调重点一").getAttribute("title"), /同级共享 · 可用/);
+  assert.match(await bar("QA手调重点二").getAttribute("title"), /同级共享 · 可用/);
   assert.equal(await bar("QA基础低优排期").locator(".timeline-blocked-overlay").count(), 1);
   await page.screenshot({ path: "outputs/priority-adjustment/two-high-timeline.png", fullPage: true });
   await bar("QA手调重点二").click();
