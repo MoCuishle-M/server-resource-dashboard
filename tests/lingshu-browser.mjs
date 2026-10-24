@@ -3,7 +3,7 @@ import ExcelJS from "exceljs";
 import assert from "node:assert/strict";
 const base = process.env.BASE_URL ?? "http://127.0.0.1:5173";
 const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
-const browser = await chromium.launch({ headless: true, channel: "chromium", args: ["--no-sandbox"],
+const browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL ?? "chromium", args: ["--no-sandbox"],
   ...(proxy && !/^http:\/\/(127\.0\.0\.1|localhost)/.test(base) ? { proxy: { server: proxy } } : {}),
 });
 try {
@@ -74,7 +74,9 @@ try {
   await d.waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "使用排期", exact: true }).click();
   await page.getByLabel("排期日期").fill(tomorrow);
+  await page.getByRole("button", { name: /^更多筛选/ }).click();
   await page.getByLabel("排期组筛选").selectOption({ label: "灵枢平台" });
+  await page.keyboard.press("Escape");
   const booking = page.locator(".timeline-booking").filter({ hasText: "QA灵枢平台排期" });
   assert.equal(await booking.count(), 1);
   assert((await booking.innerText()).includes("灵枢平台"));
