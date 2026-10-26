@@ -44,6 +44,7 @@ test("only administrators can fill negotiated quantities; blank and zero have di
   assert.ok(checkTablePlan(s, s.weeklyPlans[0], now).some(x => /协商后数量/.test(x.message)));
   s = act(s, "negotiate", { demandId: s.weeklyDemands[0].id, lineId: s.weeklyDemands[0].lines[0].id, quantity: 0 });
   assert.equal(s.weeklyDemands[0].lines[0].negotiated, 0);
+  assert.equal(checkTablePlan(s, s.weeklyPlans[0], now).filter(x => x.severity === "error").length, 0, "zero negotiated quantity disables topology requirements");
   assert.throws(() => act(s, "negotiate", { demandId: s.weeklyDemands[0].id, lineId: s.weeklyDemands[0].lines[0].id, quantity: 2 }, contact), /管理员/);
   s = act(s, "demand", { demand: { ...s.weeklyDemands[0], lines: [{ ...s.weeklyDemands[0].lines[0], negotiated: 2, sameRackCount: 0 }] } }, contact);
   assert.equal(s.weeklyDemands[0].lines[0].negotiated, 0);

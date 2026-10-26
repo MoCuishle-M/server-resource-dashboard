@@ -74,7 +74,7 @@ export function checkTablePlan(s: State, p: WeeklyPlan, now = new Date().toISOSt
     const rs = a.resourceIds.map(id => s.resources.find(r => r.id === id)!);
     const rackCounts = new Map<string, number>();
     for (const r of rs) if (rackKey(r)) rackCounts.set(rackKey(r), (rackCounts.get(rackKey(r)) ?? 0) + 1);
-    const need = l.sameRackCount ?? (l.rackPolicy === "required" ? target : 0);
+    const need = target === 0 ? 0 : l.sameRackCount ?? (l.rackPolicy === "required" ? target : 0);
     if (need > 0 && Math.max(0, ...rackCounts.values()) < need) add(`${d.title}：未满足至少${need}台在同一柜的要求`);
     for (const groupId of l.sameRackGroupIds ?? []) {
       const peers = rows.filter(row => row.assignments.some(x => x.groupId === groupId)).map(row => rackKey(s.resources.find(r => r.id === row.resourceId))).filter(Boolean);
@@ -85,13 +85,13 @@ export function checkTablePlan(s: State, p: WeeklyPlan, now = new Date().toISOSt
   return issues;
 }
 
-export function inheritedTableRows(s: State, previous?: WeeklyPlan): WeeklyServerRow[] {
+export function inheritedTableRows(s: State, previous?: WeeklyPlan, now = new Date().toISOString()): WeeklyServerRow[] {
   const rows = new Map<string, WeeklyServerRow>();
   if (previous) for (const row of tableRows(s, previous)) rows.set(row.resourceId, {
     resourceId: row.resourceId, specialNote: row.specialNote,
     assignments: previous.clearedResourceIds?.includes(row.resourceId) ? [] : row.assignments.map(a => ({ groupId: a.groupId, purpose: a.purpose })),
   });
-  if (!previous) for (const b of s.bookings.filter(b => b.status === "scheduled")) {
+  if (!previous) for (const b of s.bookings.filter(b => b.status === "scheduled" && b.startAt <= now && b.endAt > now)) {
     const row = rows.get(b.resourceId) ?? { resourceId: b.resourceId, assignments: [], specialNote: "" };
     if (!row.assignments.some(a => a.groupId === b.groupId)) row.assignments.push({ groupId: b.groupId, purpose: b.purpose });
     rows.set(b.resourceId, row);

@@ -47,7 +47,7 @@ export function applyWeeklyTableAction(s: State, actor: Actor, a: Action, now: s
     if (s.weeklyPlans.some(p => p.weekStart === weekStart)) fail("该周已有排期，请选择已有计划", 409);
     const previous = [...s.weeklyPlans].filter(p => p.weekStart < weekStart).sort((a, b) => b.weekStart.localeCompare(a.weekStart))[0];
     const pool = (s.settings.weeklyPoolIds ?? previous?.resourceIds ?? s.resources.filter(r => !r.deleted && !r.hidden).map(r => r.id)).filter(id => s.resources.some(r => r.id === id && !r.deleted && !r.hidden));
-    const inherited = inheritedTableRows(s, previous);
+    const inherited = inheritedTableRows(s, previous, now);
     const p: WeeklyPlan = { id: crypto.randomUUID(), layout: "table", weekStart, status: "collecting", resourceIds: pool,
       rows: pool.map(id => inherited.find(r => r.resourceId === id) ?? { resourceId: id, assignments: [], specialNote: "" }), allocations: [], deferred: [], confirmations: [], createdAt: now, updatedAt: now, publishedAt: "" };
     s.weeklyPlans.push(p); audit("创建表格周计划", "weekly", p.id, `${weekStart}周，默认继承以前的分配`, null, p); return;
@@ -96,6 +96,7 @@ export function applyWeeklyTableAction(s: State, actor: Actor, a: Action, now: s
       const resourceType = str(l.resourceType, "服务器类型", 80), desired = num(l.desired, 200, "理想数量", 1), shareCount = num(l.shareCount, desired, "可共用数量");
       if (!["bare", "lingshu"].includes(l.accessMode)) fail("使用方式不正确");
       const negotiated = admin ? (l.negotiated === undefined ? undefined : num(l.negotiated, desired, "协商后数量")) : previousLine?.negotiated;
+      if (negotiated !== undefined && negotiated > desired) fail("理想数量不能低于已协商数量，请管理员先调整协商结果");
       const sameRackCount = num(l.sameRackCount ?? 0, desired, "同柜数量");
       const sameRackGroupIds = ids(l.sameRackGroupIds ?? []); if (sameRackGroupIds.some(id => id === groupId || !s.groups.some(g => g.id === id))) fail("同柜组别不正确");
       const line: WeeklyLine = { id: previousLine?.id ?? crypto.randomUUID(), zone: "green", family: "A3", accessMode: l.accessMode, resourceType, desired, minimum: 0, negotiated,
