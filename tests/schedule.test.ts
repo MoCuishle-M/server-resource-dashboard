@@ -4,6 +4,17 @@ import { calendarRange, customRange, layoutBookings, shiftDate, timelineTicks } 
 import type { Booking } from "../lib/types";
 import { bookingAvailability, displayBookings, requestPriorityPreview } from "../lib/priority";
 import type { Resource } from "../lib/types";
+import type { WeeklyPlan } from "../lib/types";
+import { scheduleNotes } from "../lib/schedule-notes";
+
+test("special-purpose notes follow published weeks, excluding drafts and adjacent weeks", () => {
+  const plan = (weekStart: string, note: string, status: WeeklyPlan["status"] = "published"): WeeklyPlan => ({ id: weekStart, weekStart, layout: "table", status, rows: [{ resourceId: "r1", assignments: [], specialNote: note }], allocations: [], deferred: [], confirmations: [], createdAt: "", updatedAt: "", publishedAt: "" });
+  const plans = [plan("2026-10-19", "旧周说明"), plan("2026-10-26", "23:00–次日09:00\n只用空闲卡"), plan("2026-11-02", "未发布", "draft"), plan("2026-11-09", "新周说明")];
+  assert.deepEqual(scheduleNotes(plans, "r1", calendarRange("2026-10-26", "week")), [{ weekStart: "2026-10-26", note: "23:00–次日09:00\n只用空闲卡" }]);
+  assert.deepEqual(scheduleNotes(plans, "other", calendarRange("2026-10-26", "week")), []);
+  assert.deepEqual(scheduleNotes(plans, "r1", calendarRange("2026-11-02", "week")), []);
+  assert.equal(scheduleNotes(plans, "r1", customRange("2026-10-20T00:00", "2026-11-10T00:00")).length, 3);
+});
 
 const booking = (id: string, startAt: string, endAt: string, status: Booking["status"] = "scheduled") => ({ id, startAt, endAt, status } as Booking);
 

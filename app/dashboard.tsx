@@ -1465,6 +1465,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     resources={resources}
                     bookings={s.bookings}
                     groups={s.groups}
+                    weeklyPlans={s.weeklyPlans}
                     now={clock}
                     onDetail={setDetail}
                     onRequest={openRequest}

@@ -78,7 +78,7 @@ function RowBatch({ s, rows, setRows }: { s: PublicState; rows: WeeklyServerRow[
 }
 
 function ResourcePicker({ s, initial, busy, save }: { s: PublicState; initial: string[]; busy: boolean; save: (ids: string[]) => Promise<void> }) {
-  const [ids, setIds] = useState(initial), [search, setSearch] = useState("");
+  const [ids, setIds] = useState(() => initial.filter(id => s.resources.some(r => r.id === id && !r.deleted && !r.hidden))), [search, setSearch] = useState("");
   const rs = s.resources.filter(r => !r.hidden && !r.deleted && resourceSearch(search)(r));
   return <form onSubmit={async e => { e.preventDefault(); await save(ids); }}><Field label="筛选候选服务器"><textarea rows={2} value={search} onChange={e => setSearch(e.target.value)} placeholder="类型、区域、机柜或多行IP" /></Field>
     <div className="weekly-actions"><button type="button" className="button" onClick={() => setIds([...new Set([...ids, ...rs.map(r => r.id)])])}>全选筛选结果</button><button type="button" className="button" onClick={() => setIds(ids.filter(id => !rs.some(r => r.id === id)))}>取消筛选结果</button><span>已选 {ids.length} 台</span></div>
@@ -94,7 +94,7 @@ export default function WeeklyTablePlanning({ state: s, busy, onAction: run }: {
   const issues = plan && admin && editable ? checkTablePlan(s, plan, s.now) : [], allocations = plan ? tableAllocations(s, plan) : [];
   const groups = plan ? tableGroups(s, plan) : [], close = () => { setDialog(null); setLocalError(""); };
   const visibleRows = rows.filter(row => { const r = s.resources.find(r => r.id === row.resourceId && !r.deleted && !r.hidden); return r && resourceSearch(search)(r); }).sort((a, b) => { const x = s.resources.find(r => r.id === a.resourceId)!, y = s.resources.find(r => r.id === b.resourceId)!; return `${x.zone}/${x.location}/${x.rack}/${x.ip}`.localeCompare(`${y.zone}/${y.location}/${y.rack}/${y.ip}`); });
-  const defaultIds = s.settings.weeklyPoolIds ?? plan?.resourceIds ?? s.resources.filter(r => !r.deleted && !r.hidden).map(r => r.id);
+  const defaultIds = (s.settings.weeklyPoolIds ?? plan?.resourceIds ?? s.resources.map(r => r.id)).filter(id => s.resources.some(r => r.id === id && !r.deleted && !r.hidden));
   const defaultRows = defaultIds.map(id => s.settings.weeklyDefaults?.find(r => r.resourceId === id) ?? inheritedTableRows(s, plan).find(r => r.resourceId === id) ?? { resourceId: id, assignments: [], specialNote: "" });
   if (legacy) return <><button className="button" onClick={() => setLegacy(false)}>返回简明表格</button><LegacyWeeklyPlanning state={s} busy={busy} onAction={run} /></>;
   const action = async (type: string, extra: Record<string, unknown> = {}, message = "周计划已更新") => run({ type: `weekly.table.${type}`, planId: plan?.id, ...extra }, message);

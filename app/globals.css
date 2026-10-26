@@ -1255,6 +1255,10 @@ tbody tr:hover {
 .schedule-server .resource-name strong { display: block; overflow: hidden; text-overflow: ellipsis; }
 .schedule-server .resource-name small { display: block; margin-top: 4px; }
 .schedule-resource-line { display: flex; align-items: center; gap: 6px; }
+.schedule-special-notes { margin: 2px 8px 7px; padding: 6px 9px; border-left: 3px solid #d69a45; border-radius: 3px; background: #fff8eb; color: #775629; font-size: calc(10px * var(--font-scale, 1.3)); line-height: 1.55; }
+.schedule-special-notes > div + div { margin-top: 5px; }
+.schedule-special-notes strong { margin-right: 10px; font-weight: 650; }
+.schedule-special-notes span { white-space: pre-line; overflow-wrap: anywhere; }
 .schedule-resource-info { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; border: 0; background: transparent; padding: 0; text-align: left; color: #465a70; font-size: calc(11px * var(--font-scale, 1.3)); line-height: 1.6; }
 .schedule-resource-info:hover { color: #ba7148; }
 .schedule-field { overflow-wrap: anywhere; }

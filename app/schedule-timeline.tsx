@@ -7,7 +7,8 @@ import { resourceStatusLabels } from "@/lib/resource-policy";
 import { resourceSearch } from "@/lib/resource-search";
 import ResourceTypeFilter from "./resource-type-filter";
 import { calendarRange, customRange, layoutBookings, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
-import type { Booking, Group, Resource } from "@/lib/types";
+import type { Booking, Group, Resource, WeeklyPlan } from "@/lib/types";
+import { scheduleNotes } from "@/lib/schedule-notes";
 import { bookingAvailability, priorityLabel } from "@/lib/priority";
 
 const localInput = (iso: string) => new Date(Date.parse(iso) + 8 * 3600000).toISOString().slice(0, 16);
@@ -24,10 +25,11 @@ type ResourceField = typeof resourceFields[number][0];
 const defaultFields: ResourceField[] = ["family", "zone", "ip"];
 const fieldStorageKey = "schedule-resource-fields-v1";
 
-export default function ScheduleTimeline({ resources, bookings, groups, now, onDetail, onRequest, onPriority }: {
+export default function ScheduleTimeline({ resources, bookings, groups, weeklyPlans = [], now, onDetail, onRequest, onPriority }: {
   resources: Resource[];
   bookings: Booking[];
   groups: Group[];
+  weeklyPlans?: WeeklyPlan[];
   now: string;
   onDetail: (resource: Resource) => void;
   onRequest: (ids: string[], range: TimelineRange) => void;
@@ -66,7 +68,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
   const resourceTypes = [...new Set(resources.map(r => r.type))];
   const resourceRows = resources.filter(r => matchesSearch(r) && (types === null || types.includes(r.type))
     && (!family || (r.family || "unset") === family) && (!zone || (r.zone || "unset") === zone))
-    .map(resource => ({ resource, layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range) }))
+    .map(resource => ({ resource, notes: scheduleNotes(weeklyPlans, resource.id, range), layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range) }))
     .filter(row => !group || row.layout.bars.length > 0);
   const fieldValue = (r: Resource, field: ResourceField) => {
     switch (field) {
@@ -153,7 +155,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
             </span>)}
           </div>
         </th></tr></thead>
-        <tbody>{resourceRows.map(({ resource: r, layout }) => <tr key={r.id}>
+        <tbody>{resourceRows.map(({ resource: r, layout, notes }) => <tr key={r.id}>
           <td className="schedule-server">
             <div className="schedule-resource-line"><button className="schedule-resource-info" aria-label={`查看服务器 ${r.ip} 详情`} onClick={() => onDetail(r)}>{fields.map(field => <span key={field} className={`schedule-field schedule-field-${field}`} title={`${resourceFields.find(([key]) => key === field)![1]}：${fieldValue(r, field)}`}>{fieldValue(r, field)}</span>)}</button>
             <button className="icon-button schedule-apply" aria-label="申请" title={r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请此服务器"} disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={14} /></button></div>
@@ -178,6 +180,9 @@ export default function ScheduleTimeline({ resources, bookings, groups, now, onD
               </button>;
             })}
           </div>
+          {!!notes.length && <div className="schedule-special-notes" aria-label={`${r.ip}特殊用途`}>
+            {notes.map(({ weekStart, note }) => <div key={weekStart}><strong>特殊用途{notes.length > 1 ? `（${weekStart}周）` : ""}</strong><span>{note}</span></div>)}
+          </div>}
           </td>
         </tr>)}</tbody>
       </table>
