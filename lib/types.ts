@@ -93,7 +93,9 @@ export type Audit = {
   before: string;
   after: string;
 };
-export type SiteSettings = { announcement: string; authorSignature: string };
+export type WeeklyServerAssignment = { groupId: string; purpose: string; demandId?: string; lineId?: string };
+export type WeeklyServerRow = { resourceId: string; assignments: WeeklyServerAssignment[]; specialNote: string };
+export type SiteSettings = { announcement: string; authorSignature: string; weeklyDefaults?: WeeklyServerRow[]; weeklyPoolIds?: string[] };
 export type AdminInvitation = {
   id: string;
   email: string;
@@ -125,6 +127,11 @@ export type WeeklyLine = {
   rackPolicy: "required" | "prefer" | "any";
   preferredResourceIds: string[];
   shareCount: number;
+  resourceType?: string;
+  negotiated?: number;
+  sameRackCount?: number;
+  sameRackGroupIds?: string[];
+  requirements?: string;
 };
 export type WeeklyDemand = {
   id: string;
@@ -145,6 +152,9 @@ export type WeeklyDemand = {
   status: "active" | "withdrawn";
   createdAt: string;
   updatedAt: string;
+  applicantName?: string;
+  applicantId?: string;
+  table?: boolean;
 };
 export type WeeklyAllocation = {
   demandId: string;
@@ -155,6 +165,11 @@ export type WeeklyAllocation = {
   note: string;
 };
 export type WeeklyPlan = {
+  layout?: "table";
+  resourceIds?: string[];
+  rows?: WeeklyServerRow[];
+  clearedResourceIds?: string[];
+  aiNote?: string;
   directory?: { id: string; title: string; groupId: string }[];
   id: string;
   weekStart: string;

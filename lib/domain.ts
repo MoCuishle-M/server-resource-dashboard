@@ -13,6 +13,7 @@ import { partialCancellationPlan } from "./booking-adjustment";
 import { extensionResourceIds } from "./request-extension";
 import { resourceStatusLabels, visibleResourceState } from "./resource-policy";
 import { applyWeeklyAction, visibleWeeklyState } from "./weekly-actions";
+import { applyWeeklyTableAction } from "./weekly-table-actions";
 import { bookingAvailability, displacesBooking, priorityLabel, priorityRank } from "./priority";
 import { priorityAdjustmentPlan } from "./priority-adjustment";
 export { priorityLabel, priorityRank } from "./priority";
@@ -398,7 +399,8 @@ export function mutate(
       fail("服务器名称重复");
   }
   if (action.type.startsWith("weekly.")) {
-    applyWeeklyAction(s, actor, action, now, { fail, audit });
+    if (action.type.startsWith("weekly.table.")) applyWeeklyTableAction(s, actor, action, now, { fail, audit });
+    else applyWeeklyAction(s, actor, action, now, { fail, audit });
     s.revision++;
     return s;
   }
@@ -407,6 +409,7 @@ export function mutate(
       needAdmin();
       const before = { ...s.settings };
       s.settings = {
+        ...s.settings,
         announcement: text(action.announcement ?? "", "公告内容", 4000, false),
         authorSignature: text(action.authorSignature ?? "", "作者签名", 200, false),
       };
@@ -1056,6 +1059,7 @@ export function serializePublic(
   return {
     ...s,
     ...weekly,
+    settings: actor.role === "admin" ? s.settings : { announcement: s.settings.announcement, authorSignature: s.settings.authorSignature },
     invitations: actor.role === "admin" ? s.invitations : [],
     accounts:
       actor.role === "admin"

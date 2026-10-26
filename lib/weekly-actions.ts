@@ -222,8 +222,12 @@ export function visibleWeeklyState(s: State, actor: Actor): Pick<State, "weeklyP
   const visible = ds.filter(d => plans.some(p => p.id === d.planId && (p.status === "published" || (contact && d.groupId === actor.groupId))));
   const own = (id: string) => visible.some(d => d.id === id && d.groupId === actor.groupId && contact);
   return {
-    weeklyDemands: visible.map(d => own(d.id) ? d : { ...d, reason: "", timeNote: "", shareNote: "", shareWithDemandIds: [], lines: d.lines.map(l => ({ ...l, preferredResourceIds: [] })) }),
+    weeklyDemands: visible.map(d => own(d.id) ? d : { ...d, applicantId: "", reason: "", timeNote: "", shareNote: "", shareWithDemandIds: [], lines: d.lines.map(l => ({ ...l, preferredResourceIds: [] })) }),
     weeklyPlans: plans.map(p => ({ ...p,
+      resourceIds: p.resourceIds?.filter(id => !hidden.has(id)),
+      clearedResourceIds: p.clearedResourceIds?.filter(id => !hidden.has(id)),
+      aiNote: "",
+      rows: p.rows?.filter(row => !hidden.has(row.resourceId)).map(row => ({ ...row, assignments: row.assignments.filter(a => p.status === "published" || (contact && a.groupId === actor.groupId)) })),
       directory: contact ? ds.filter(d => d.planId === p.id && d.status === "active").map(d => ({ id: d.id, title: d.title, groupId: d.groupId })) : [],
       allocations: p.allocations.filter(a => visible.some(d => d.id === a.demandId)).map(a => own(a.demandId) ? a : { ...a, note: "" }),
       deferred: p.deferred.filter(a => visible.some(d => d.id === a.demandId)).map(a => own(a.demandId) ? a : { ...a, reason: "本周暂缓" }),

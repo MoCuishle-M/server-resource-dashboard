@@ -1,0 +1,145 @@
+"use client";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { CalendarDays, Download, Plus, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import type { Action, PublicState, WeeklyDemand, WeeklyPlan, WeeklyServerRow } from "@/lib/types";
+import { calendarRange, shiftDate } from "@/lib/schedule";
+import { CANADA_NOTE, SMOKE_NOTE, checkTablePlan, inheritedTableRows, tableAllocations, tableDemands, tableGroups, tableRows } from "@/lib/weekly-table";
+import { weeklyStatusLabels } from "@/lib/weekly-planner";
+import { resourceSearch } from "@/lib/resource-search";
+import { FeedbackContext, OperationFeedback } from "./operation-feedback";
+import LegacyWeeklyPlanning from "./weekly-planning";
+
+type Run = (action: Action, message?: string) => Promise<boolean>;
+function Dialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null), feedback = useContext(FeedbackContext);
+  useEffect(() => { const d = ref.current, previous = document.activeElement as HTMLElement; d?.showModal(); return () => { d?.close(); previous?.focus(); feedback?.setNotice(n => n?.dialog === d ? n.kind === "error" ? null : { ...n, dialog: null } : n); }; }, []);
+  return <dialog ref={ref} className="modal modal-wide weekly-dialog" aria-label={title} onCancel={onClose}>
+    {ref.current && feedback?.notice?.dialog === ref.current && <OperationFeedback notice={feedback.notice} insideDialog onClose={() => feedback.setNotice(null)} />}
+    <header><h2>{title}</h2><button type="button" className="icon-button" aria-label="关闭" onClick={onClose}><X size={18} /></button></header>{children}
+  </dialog>;
+}
+function Field({ label, children }: { label: string; children: ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
+const zone = (v?: string) => v === "green" ? "绿区" : v === "blue" ? "蓝区" : "未登记";
+const chinaDay = (v: string) => new Date(Date.parse(v) + 28800000).toISOString().slice(0, 10);
+
+function DemandEditor({ s, p, demand, busy, run, close }: { s: PublicState; p: WeeklyPlan; demand?: WeeklyDemand; busy: boolean; run: Run; close: () => void }) {
+  const admin = s.actor.role === "admin", initial = demand?.lines[0];
+  const [peers, setPeers] = useState(initial?.sameRackGroupIds ?? []);
+  const types = [...new Set([...s.resources.filter(r => !r.deleted && !r.hidden).map(r => r.type), ...(initial?.resourceType ? [initial.resourceType] : [])])];
+  const [group, setGroup] = useState(demand?.groupId ?? (s.actor.groupId || s.groups[0]?.id));
+  return <form onSubmit={async e => {
+    e.preventDefault(); const f = new FormData(e.currentTarget), negotiated = String(f.get("negotiated") ?? "");
+    if (await run({ type: "weekly.table.demand", planId: p.id, demand: { id: demand?.id, groupId: group, title: f.get("purpose"), applicantName: f.get("applicant"), lines: [{
+      resourceType: f.get("resourceType"), accessMode: f.get("accessMode"), desired: Number(f.get("desired")), negotiated: negotiated === "" ? undefined : Number(negotiated), shareCount: Number(f.get("share")), sameRackCount: Number(f.get("rackCount")), sameRackGroupIds: peers.filter(id => id !== group), requirements: f.get("requirements"),
+    }] } }, "需求已保存；请管理员在例会后填写协商数量")) close();
+  }}>
+    <p className="notice">一行填写一种服务器类型；多种类型可分别提交。默认按整周安排，多个组可在同一台自行协调共用。</p>
+    <div className="form-grid">
+      <Field label="使用用途"><textarea name="purpose" required rows={2} maxLength={1000} defaultValue={demand?.title} /></Field>
+      <Field label="组名"><select aria-label="组名" value={group} disabled={!admin || !!demand} onChange={e => setGroup(e.target.value)}>{s.groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
+      <Field label="申请人"><input name="applicant" required maxLength={100} defaultValue={demand?.applicantName ?? s.actor.displayName} /></Field>
+      <Field label="服务器类型"><select name="resourceType" required defaultValue={initial?.resourceType ?? types[0]}>{types.map(t => <option key={t}>{t}</option>)}</select></Field>
+      <Field label="使用方式"><select name="accessMode" defaultValue={initial?.accessMode ?? "bare"}><option value="bare">裸机</option><option value="lingshu">灵枢</option></select></Field>
+      <Field label="理想需要多少台"><input name="desired" required type="number" min={1} max={200} defaultValue={initial?.desired ?? 1} /></Field>
+      <Field label="协商后需要多少台（管理员填）"><input name="negotiated" type="number" min={0} max={200} disabled={!admin} defaultValue={initial?.negotiated ?? ""} placeholder="待开会协商；0表示本周不安排" /></Field>
+      <Field label="其中多少台支持共用"><input name="share" required type="number" min={0} max={200} defaultValue={initial?.shareCount ?? 0} /></Field>
+      <Field label="至少多少台在同一柜"><input name="rackCount" required type="number" min={0} max={200} defaultValue={initial?.sameRackCount ?? 0} /></Field>
+      <Field label="其他要求"><textarea name="requirements" rows={3} maxLength={2000} defaultValue={initial?.requirements} placeholder="例如环境依赖、希望沿用的IP、分成两组每组4台同柜" /></Field>
+    </div>
+    <fieldset className="weekly-line"><legend>需要与哪些组使用的服务器在同一柜</legend><div className="weekly-options">{s.groups.filter(g => g.id !== group).map(g => <label className="checkbox-label" key={g.id}><input type="checkbox" checked={peers.includes(g.id)} onChange={e => setPeers(e.target.checked ? [...peers, g.id] : peers.filter(id => id !== g.id))} />{g.name}</label>)}</div></fieldset>
+    <div className="modal-footer"><button type="button" className="button" onClick={close}>取消</button><button className="button primary" disabled={busy}>保存需求</button></div>
+  </form>;
+}
+
+function RowsEditor({ s, rows, onSave, busy, defaults = false }: { s: PublicState; rows: WeeklyServerRow[]; onSave: (rows: WeeklyServerRow[]) => Promise<void>; busy: boolean; defaults?: boolean }) {
+  const [draft, setDraft] = useState(() => structuredClone(rows)), [search, setSearch] = useState("");
+  const update = (id: string, value: Partial<WeeklyServerRow>) => setDraft(draft.map(row => row.resourceId === id ? { ...row, ...value } : row));
+  return <form onSubmit={async e => { e.preventDefault(); await onSave(draft); }}>
+    <p className="notice">勾选一个组为独占，多个组为共用。可批量选择服务器后设置，减少逐台操作。特殊用途仅作明确标注。</p>
+    <RowBatch s={s} rows={draft} setRows={setDraft} />
+    <Field label="筛选服务器"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="机柜、区域、类型、名称或IP" /></Field>
+    <div className="table-scroll weekly-editor-scroll"><table className="weekly-grid"><thead><tr><th>区域 / 机柜</th><th>服务器 / IP</th><th>使用组别</th><th>使用用途</th><th>特殊用途</th></tr></thead><tbody>{draft.filter(row => { const r = s.resources.find(r => r.id === row.resourceId); return r && resourceSearch(search)(r); }).map(row => {
+      const r = s.resources.find(r => r.id === row.resourceId)!;
+      return <tr key={r.id}><td>{zone(r.zone)}<small>{r.rack || "未登记机柜"}</small></td><td>{r.name}<small>{r.ip}</small></td><td><div className="weekly-group-checks">{s.groups.map(g => <label className="checkbox-label" key={g.id}><input type="checkbox" checked={row.assignments.some(a => a.groupId === g.id)} onChange={e => update(r.id, { assignments: e.target.checked ? [...row.assignments, { groupId: g.id, purpose: defaults ? "常态分配" : "本周使用" }] : row.assignments.filter(a => a.groupId !== g.id) })} />{g.name}</label>)}</div></td>
+        <td>{row.assignments.map(a => <Field label={s.groups.find(g => g.id === a.groupId)?.name ?? a.groupId} key={a.groupId}><input aria-label={`${r.ip} ${a.groupId}用途`} maxLength={1000} value={a.purpose} onChange={e => update(r.id, { assignments: row.assignments.map(x => x.groupId === a.groupId ? { ...x, purpose: e.target.value } : x) })} /></Field>)}</td>
+        <td><textarea aria-label={`${r.ip}特殊用途`} rows={3} maxLength={2000} value={row.specialNote} onChange={e => update(r.id, { specialNote: e.target.value })} /><div className="weekly-preset-actions"><button className="text-button" type="button" onClick={() => update(r.id, { specialNote: [row.specialNote, SMOKE_NOTE].filter(Boolean).join("\n") })}>加冒烟标注</button><button className="text-button" type="button" onClick={() => update(r.id, { specialNote: [row.specialNote, CANADA_NOTE].filter(Boolean).join("\n") })}>加加研标注</button></div></td></tr>;
+    })}</tbody></table></div>
+    <div className="modal-footer"><button className="button primary" disabled={busy}>保存{defaults ? "常态分配" : "预排期"}</button></div>
+  </form>;
+}
+
+function RowBatch({ s, rows, setRows }: { s: PublicState; rows: WeeklyServerRow[]; setRows: (rows: WeeklyServerRow[]) => void }) {
+  const [rack, setRack] = useState(""), [groupIds, setGroupIds] = useState<string[]>([]), [note, setNote] = useState("");
+  const racks = [...new Set(rows.map(row => { const r = s.resources.find(r => r.id === row.resourceId); return r ? `${zone(r.zone)} / ${r.location} / ${r.rack || "未登记"}` : ""; }).filter(Boolean))];
+  return <details className="weekly-batch"><summary>按机柜批量设置使用组与特殊用途</summary><div className="form-grid"><Field label="选择机柜"><select value={rack} onChange={e => setRack(e.target.value)}><option value="">请选择</option>{racks.map(r => <option key={r}>{r}</option>)}</select></Field><Field label="批量特殊用途"><select value={note} onChange={e => setNote(e.target.value)}><option value="">保留原标注</option><option value={SMOKE_NOTE}>冒烟</option><option value={CANADA_NOTE}>加拿大夜间插空</option></select></Field></div>
+    <div className="weekly-options">{s.groups.map(g => <label className="checkbox-label" key={g.id}><input type="checkbox" checked={groupIds.includes(g.id)} onChange={e => setGroupIds(e.target.checked ? [...groupIds, g.id] : groupIds.filter(id => id !== g.id))} />{g.name}</label>)}</div>
+    <button type="button" className="button" disabled={!rack || (!groupIds.length && !note)} onClick={() => setRows(rows.map(row => { const r = s.resources.find(r => r.id === row.resourceId); return r && `${zone(r.zone)} / ${r.location} / ${r.rack || "未登记"}` === rack ? { ...row, ...(groupIds.length ? { assignments: groupIds.map(groupId => ({ groupId, purpose: "常态分配" })) } : {}), ...(note ? { specialNote: note } : {}) } : row; }))}>应用到此柜</button>
+  </details>;
+}
+
+function ResourcePicker({ s, initial, busy, save }: { s: PublicState; initial: string[]; busy: boolean; save: (ids: string[]) => Promise<void> }) {
+  const [ids, setIds] = useState(initial), [search, setSearch] = useState("");
+  const rs = s.resources.filter(r => !r.hidden && !r.deleted && resourceSearch(search)(r));
+  return <form onSubmit={async e => { e.preventDefault(); await save(ids); }}><Field label="筛选候选服务器"><textarea rows={2} value={search} onChange={e => setSearch(e.target.value)} placeholder="类型、区域、机柜或多行IP" /></Field>
+    <div className="weekly-actions"><button type="button" className="button" onClick={() => setIds([...new Set([...ids, ...rs.map(r => r.id)])])}>全选筛选结果</button><button type="button" className="button" onClick={() => setIds(ids.filter(id => !rs.some(r => r.id === id)))}>取消筛选结果</button><span>已选 {ids.length} 台</span></div>
+    <div className="weekly-picker">{rs.map(r => <label className="weekly-pick-row checkbox-label" key={r.id}><input type="checkbox" checked={ids.includes(r.id)} onChange={e => setIds(e.target.checked ? [...ids, r.id] : ids.filter(id => id !== r.id))} /><span>{r.name} · {r.ip}<small>{zone(r.zone)} · {r.type} · {r.rack || "未登记机柜"}</small></span></label>)}</div><div className="modal-footer"><button className="button primary" disabled={busy}>保存参与范围</button></div></form>;
+}
+
+export default function WeeklyTablePlanning({ state: s, busy, onAction: run }: { state: PublicState; busy: boolean; onAction: Run }) {
+  const [selected, setSelected] = useState(""), [tab, setTab] = useState<"schedule" | "demands">("schedule"), [dialog, setDialog] = useState<string | null>(null), [editing, setEditing] = useState<WeeklyDemand>(), [confirmGroup, setConfirmGroup] = useState("");
+  const [search, setSearch] = useState(""), [checked, setChecked] = useState<string[]>([]), [localError, setLocalError] = useState(""), [legacy, setLegacy] = useState(false);
+  const admin = s.actor.role === "admin", contact = s.actor.role === "contact", plans = [...s.weeklyPlans].sort((a, b) => b.weekStart.localeCompare(a.weekStart));
+  const plan = plans.find(p => p.id === selected) ?? plans[0], rows = plan ? tableRows(s, plan) : [], demands = plan ? tableDemands(s, plan) : [];
+  const editable = !!plan && plan.layout === "table" && plan.status !== "published", name = (id: string) => s.groups.find(g => g.id === id)?.name ?? id;
+  const issues = plan && admin && editable ? checkTablePlan(s, plan, s.now) : [], allocations = plan ? tableAllocations(s, plan) : [];
+  const groups = plan ? tableGroups(s, plan) : [], close = () => { setDialog(null); setLocalError(""); };
+  const visibleRows = rows.filter(row => { const r = s.resources.find(r => r.id === row.resourceId && !r.deleted && !r.hidden); return r && resourceSearch(search)(r); }).sort((a, b) => { const x = s.resources.find(r => r.id === a.resourceId)!, y = s.resources.find(r => r.id === b.resourceId)!; return `${x.zone}/${x.location}/${x.rack}/${x.ip}`.localeCompare(`${y.zone}/${y.location}/${y.rack}/${y.ip}`); });
+  const defaultIds = s.settings.weeklyPoolIds ?? plan?.resourceIds ?? s.resources.filter(r => !r.deleted && !r.hidden).map(r => r.id);
+  const defaultRows = defaultIds.map(id => s.settings.weeklyDefaults?.find(r => r.resourceId === id) ?? inheritedTableRows(s, plan).find(r => r.resourceId === id) ?? { resourceId: id, assignments: [], specialNote: "" });
+  if (legacy) return <><button className="button" onClick={() => setLegacy(false)}>返回简明表格</button><LegacyWeeklyPlanning state={s} busy={busy} onAction={run} /></>;
+  const action = async (type: string, extra: Record<string, unknown> = {}, message = "周计划已更新") => run({ type: `weekly.table.${type}`, planId: plan?.id, ...extra }, message);
+  return <div className="weekly-workspace weekly-simple">
+    <section className="panel weekly-overview"><div className="section-heading"><div><h2><CalendarDays size={20} />每周需求与排期</h2><p>周一至周日 · 北京时间 · 默认继承以前的分配，例会协商后确认发布</p></div><div className="weekly-actions">
+      {!!plans.length && <select aria-label="选择周计划" value={plan?.id} onChange={e => { setSelected(e.target.value); setChecked([]); }}>{plans.map(p => <option key={p.id} value={p.id}>{p.weekStart} 周 · {weeklyStatusLabels[p.status]}</option>)}</select>}
+      {admin && <><button className="button" disabled={busy} onClick={() => setDialog("defaults")}><Settings2 size={16} />常态分配</button><button className="button primary" disabled={busy} onClick={() => setDialog("create")}><Plus size={16} />创建周计划</button></>}
+    </div></div>
+    {plan ? <><div className="weekly-steps">{Object.entries(weeklyStatusLabels).map(([key, label], i) => <span key={key} className={plan.status === key ? "current" : ""}><b>{i + 1}</b>{label}</span>)}</div>
+      <div className="weekly-metrics"><span><strong>{rows.filter(r => r.assignments.length).length}</strong>台已分配 / {rows.length}台参与</span><span><strong>{demands.length}</strong>项需求</span><span><strong>{plan.confirmations.filter(c => c.status === "confirmed").length}/{groups.length}</strong>组已确认</span></div>
+      <div className="weekly-actions weekly-toolbar">
+        {admin && editable && <><button className="button" onClick={() => setDialog("pool")} disabled={busy}>选择参与服务器</button><button className="button" onClick={() => setDialog("rows")} disabled={busy}>编辑预排期表</button><button className="button" onClick={() => setDialog("inherit")} disabled={busy}>套用常态 / 上周分配</button></>}
+        {admin && plan.layout !== "table" && <button className="button primary" disabled={busy} onClick={() => setDialog("reopen")}>使用新表格重新编排</button>}
+        {admin && plan.layout === "table" && plan.status === "published" && <button className="button" disabled={busy} onClick={() => setDialog("reopen")}>重新编排本周</button>}
+        {admin && editable && <><button className="button" disabled={busy} onClick={() => action("recommend", {}, "规则草案已生成，请检查数量与要求")}>规则推荐</button><button className="button" disabled={busy} onClick={() => setDialog("ai")}><Sparkles size={16} />AI 辅助排期</button>
+          {plan.status === "collecting" ? <button className="button" disabled={busy} onClick={() => action("stage", { status: "draft" })}>结束收集，开始排期</button> : <button className="button" disabled={busy} onClick={() => action("stage", { status: "collecting" })}>重新开放收集</button>}
+          {plan.status !== "confirming" ? <button className="button primary" disabled={busy || issues.some(x => x.severity === "error")} onClick={() => action("stage", { status: "confirming" }, "已提交各组确认")}>提交各组确认</button> : <button className="button primary" disabled={busy || groups.some(g => !plan.confirmations.some(c => c.groupId === g && c.status === "confirmed"))} onClick={() => setDialog("publish")}>发布本周方案</button>}
+        </>}
+        <button className="button" onClick={async () => { try { const { exportWeeklyWorkbook } = await import("@/lib/weekly-export"); await exportWeeklyWorkbook(s, plan); } catch { setLocalError("导出失败，请重试"); } }}><Download size={16} />导出 Excel</button>
+        {admin && <button className="button danger" disabled={!checked.length || busy} onClick={() => setDialog("clear")}><Trash2 size={16} />清空所选未来排期（{checked.length}）</button>}
+      </div>
+    </> : <p className="weekly-empty">{admin ? "创建本周计划，选择参与服务器并收集各组需求。" : "管理员创建周计划后，组接口人可填写需求。"}</p>}
+    </section>
+    {localError && <p role="alert" className="notice">{localError}</p>}
+    {plan && <><section className="panel"><div className="weekly-table-tabs"><button className={tab === "schedule" ? "active" : ""} onClick={() => setTab("schedule")}>服务器预排期表</button><button className={tab === "demands" ? "active" : ""} onClick={() => setTab("demands")}>需求收集表</button></div>
+      {tab === "schedule" ? <><div className="weekly-sheet-tools"><Field label="筛选预排期表"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="类型、区域、机柜、名称或IP" /></Field>{admin && <button className="button" onClick={() => setChecked([...new Set([...checked, ...visibleRows.map(r => r.resourceId)])])}>选择筛选结果</button>}{!!checked.length && <button className="text-button" onClick={() => setChecked([])}>取消选择</button>}</div>
+        <div className="table-scroll"><table className="weekly-grid weekly-server-sheet"><thead><tr>{admin && <th><input aria-label="选择当前表格全部服务器" type="checkbox" checked={!!visibleRows.length && visibleRows.every(r => checked.includes(r.resourceId))} onChange={e => setChecked(e.target.checked ? [...new Set([...checked, ...visibleRows.map(r => r.resourceId)])] : checked.filter(id => !visibleRows.some(r => r.resourceId === id)))} /></th>}<th>区域 / 柜号</th><th>服务器类型</th><th>服务器 / OS/IP</th><th>使用组别</th><th>使用用途</th><th>特殊用途</th></tr></thead><tbody>{visibleRows.map(row => { const r = s.resources.find(r => r.id === row.resourceId)!; return <tr key={r.id} className={plan.clearedResourceIds?.includes(r.id) ? "weekly-cleared" : ""}>{admin && <td><input aria-label={`选择 ${r.ip}`} type="checkbox" checked={checked.includes(r.id)} onChange={e => setChecked(e.target.checked ? [...checked, r.id] : checked.filter(id => id !== r.id))} /></td>}<td>{zone(r.zone)}<small>{r.rack || "未登记机柜"}</small></td><td>{r.type}<small>{r.accessMode === "bare" ? "裸机" : "灵枢"}</small></td><td>{r.name}<small className="mono">{r.ip}</small></td><td>{row.assignments.length ? row.assignments.map(a => <span className="weekly-team-tag" key={a.groupId}>{name(a.groupId)}</span>) : <span className="muted">待分配</span>}{row.assignments.length > 1 && <small>共用 · 各组自行协调</small>}{plan.clearedResourceIds?.includes(r.id) && <small>未来排期已清空（保留发布快照）</small>}</td><td>{row.assignments.map(a => <div key={a.groupId}>{a.purpose || "常态分配"}</div>)}</td><td className="weekly-special-note">{row.specialNote || "—"}</td></tr>; })}</tbody></table></div>
+      </> : <><div className="weekly-sheet-tools"><p className="muted">理想数量由申请人填写，协商后数量由管理员在例会后填写。</p>{editable && plan.status === "collecting" && (admin || contact) && <button className="button primary" disabled={busy} onClick={() => { setEditing(undefined); setDialog("demand"); }}>填写需求</button>}</div><div className="table-scroll"><table className="weekly-grid weekly-demand-sheet"><thead><tr><th>使用用途</th><th>组名</th><th>申请人</th><th>服务器类型</th><th>理想数量</th><th>协商后数量</th><th>支持共用</th><th>要求</th><th>已分配</th><th>操作</th></tr></thead><tbody>{demands.flatMap(d => d.lines.map(l => <tr key={`${d.id}/${l.id}`}><td>{d.title}</td><td>{name(d.groupId)}</td><td>{d.applicantName || "历史记录"}</td><td>{l.resourceType ?? `${zone(l.zone)} ${l.family}`}<small>{l.accessMode === "bare" ? "裸机" : "灵枢"}</small></td><td>{l.desired}</td><td>{admin && editable ? <input className="weekly-quantity" type="number" min={0} max={l.desired} aria-label={`${d.title}协商后数量`} key={`${l.id}/${l.negotiated}`} defaultValue={l.negotiated ?? ""} placeholder="待协商" disabled={busy} onBlur={e => { if (e.target.value !== "" && Number(e.target.value) !== l.negotiated) action("negotiate", { demandId: d.id, lineId: l.id, quantity: Number(e.target.value) }); }} /> : l.negotiated ?? "待协商"}</td><td>{l.shareCount}台</td><td>{!!l.sameRackCount && <div>至少{l.sameRackCount}台同柜</div>}{!!l.sameRackGroupIds?.length && <div>与{l.sameRackGroupIds.map(name).join("、")}同柜</div>}{l.requirements || "尽量同柜、少移动"}</td><td>{allocations.find(a => a.demandId === d.id && a.lineId === l.id)?.resourceIds.length ?? 0}台</td><td>{editable && plan.status === "collecting" && (admin || d.groupId === s.actor.groupId) && <div className="weekly-row-actions"><button className="text-button" onClick={() => { setEditing(d); setDialog("demand"); }}>编辑</button><button className="text-button danger-text" onClick={() => { setEditing(d); setDialog("withdraw"); }}>撤回</button></div>}</td></tr>))}</tbody></table></div>{!demands.length && <p className="weekly-empty">暂无需求；各组可按服务器类型逐行提交。</p>}</>}
+    </section>
+    {admin && editable && !!issues.length && <section className="panel weekly-checks"><h3>待协调事项</h3><ul>{issues.map((x, i) => <li key={i} className={x.severity}>{x.message}</li>)}</ul></section>}
+    {!!groups.length && <section className="panel weekly-confirmations"><h3>各组确认</h3><p className="muted">所有参与组确认后才能发布；管理员可填写原因代确认。修改需求或分配后需重新确认。</p>{groups.filter(id => admin || id === s.actor.groupId).map(id => { const c = plan.confirmations.find(c => c.groupId === id); return <div key={id}><span><strong>{name(id)}</strong><small>{c ? `${c.status === "confirmed" ? "已确认" : "要求调整"} · ${c.by} · ${c.note}` : "待确认"}</small></span>{plan.status === "confirming" && (admin || contact) && <button className="button" disabled={busy} onClick={() => { setConfirmGroup(id); setDialog("confirm"); }}>{admin ? "代确认 / 记录反馈" : "确认本组安排"}</button>}</div>; })}</section>}
+    {plan.layout !== "table" && <button className="text-button" onClick={() => setLegacy(true)}>查看历史版计划详情</button>}
+    </>}
+    {dialog === "create" && <Dialog title="创建周计划" onClose={close}><form onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); if (await action("create", { weekStart: f.get("week") }, "本周计划已创建，已继承以前的分配")) { setSelected(""); setChecked([]); close(); } }}><Field label="周起始日期（北京时间周一）"><input type="date" name="week" required defaultValue={chinaDay(calendarRange(chinaDay(s.now), "week").startAt)} /></Field><p className="notice">默认继承以前的分配与常态设置。每周由管理员手动调整并发布。</p><div className="modal-footer"><button className="button primary" disabled={busy}>创建并收集需求</button></div></form></Dialog>}
+    {dialog === "demand" && plan && <Dialog title={editing ? "编辑需求" : "填写需求"} onClose={close}><DemandEditor s={s} p={plan} demand={editing} busy={busy} run={run} close={close} /></Dialog>}
+    {dialog === "pool" && plan && <Dialog title="选择参与排期的服务器" onClose={close}><p className="notice">移出范围会移除该服务器的草稿安排，并重置各组确认。</p><ResourcePicker s={s} initial={plan.resourceIds ?? []} busy={busy} save={async ids => { if (await action("pool", { resourceIds: ids })) { setChecked(checked.filter(id => ids.includes(id))); close(); } }} /></Dialog>}
+    {dialog === "rows" && plan && <Dialog title="编辑服务器预排期表" onClose={close}><RowsEditor s={s} rows={rows} busy={busy} onSave={async rows => { if (await action("rows", { rows }, "预排期已保存，需各组重新确认")) close(); }} /></Dialog>}
+    {dialog === "defaults" && <Dialog title="常态分配与特殊用途" onClose={close}><p className="notice">常态分配作为新周计划的默认值；可设置 MM 两组共用、RL 两组共用。不会直接改动正式排期。</p><button className="button" onClick={() => setDialog("defaultPool")}>选择常态服务器范围</button><RowsEditor s={s} rows={defaultRows} defaults busy={busy} onSave={async rows => { if (await action("defaults", { resourceIds: defaultIds, rows: rows.map(r => ({ ...r, assignments: r.assignments.map(a => ({ groupId: a.groupId, purpose: a.purpose })) })) }, "常态分配已保存")) close(); }} /></Dialog>}
+    {dialog === "defaultPool" && <Dialog title="选择常态服务器范围" onClose={close}><ResourcePicker s={s} initial={defaultIds} busy={busy} save={async ids => { if (await action("defaults", { resourceIds: ids, rows: ids.map(id => defaultRows.find(r => r.resourceId === id) ?? { resourceId: id, assignments: [], specialNote: "" }).map(r => ({ ...r, assignments: r.assignments.map(a => ({ groupId: a.groupId, purpose: a.purpose })) })) })) setDialog("defaults"); }} /></Dialog>}
+    {dialog === "clear" && <Dialog title="清空所选服务器从现在起的全部排期" onClose={close}><form onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); if (await action("clear", { resourceIds: checked, reason: f.get("reason") }, "所选服务器的全部未来排期已清空")) { setChecked([]); close(); } }}><p className="notice">将结束正在进行的排期，取消未来预约，并移除待审批申请和周计划草稿中对应服务器的安排。已发生的历史、常态模板与特殊用途标注保留。</p><ul className="weekly-clear-list">{checked.map(id => { const r = s.resources.find(r => r.id === id); return <li key={id}>{r?.name} · {r?.ip}</li>; })}</ul><p>影响 {s.bookings.filter(b => checked.includes(b.resourceId) && ["scheduled", "preempted"].includes(b.status) && b.endAt > s.now).length} 条未来排期。</p><Field label="清空原因"><textarea name="reason" required maxLength={1000} rows={2} /></Field><div className="modal-footer"><button type="button" className="button" onClick={close}>取消</button><button className="button danger" disabled={busy}>确认清空未来排期</button></div></form></Dialog>}
+    {dialog === "confirm" && plan && <Dialog title={`${admin ? "管理员代确认" : "确认安排"} · ${name(confirmGroup)}`} onClose={close}><form onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); if (await action("confirm", { groupId: confirmGroup, status: f.get("status"), note: f.get("note") }, "确认结果已记录")) close(); }}><Field label="确认结果"><select name="status"><option value="confirmed">同意本组安排</option><option value="changes">需要调整</option></select></Field><Field label={admin ? "代确认原因（必填）" : "反馈说明"}><textarea name="note" rows={3} maxLength={1000} required={admin} /></Field><div className="modal-footer"><button className="button primary" disabled={busy}>保存确认结果</button></div></form></Dialog>}
+    {dialog === "publish" && plan && <Dialog title="发布本周方案" onClose={close}><p className="notice">发布 {plan.weekStart} 至 {shiftDate(plan.weekStart, 6)} 的安排，共 {rows.filter(r => r.assignments.length).length} 台服务器、{groups.length} 个组。共用服务器将同步为共享模式。重新发布会替换此周计划从现在起的正式预约，已发生的历史保留。</p><div className="modal-footer"><button className="button" onClick={close}>继续核对</button><button className="button primary" disabled={busy} onClick={async () => { if (await action("publish", {}, "本周方案已发布到正式使用排期")) close(); }}>确认发布</button></div></Dialog>}
+    {dialog === "reopen" && plan && <Dialog title="重新编排本周" onClose={close}><p className="notice">沿用现有分配，重新收集与协商。各组需要重新确认；正式预约在再次发布时统一更新。</p><div className="modal-footer"><button className="button primary" disabled={busy} onClick={async () => { if (await action("reopen")) close(); }}>开始重新编排</button></div></Dialog>}
+    {dialog === "inherit" && <Dialog title="套用常态 / 上周分配" onClose={close}><p className="notice">将覆盖当前预排期表并重置各组确认；需求表保留。</p><div className="modal-footer"><button className="button" disabled={busy} onClick={async () => { if (await action("inherit", { source: "previous" })) close(); }}>沿用上周分配</button><button className="button primary" disabled={busy} onClick={async () => { if (await action("inherit", { source: "defaults" })) close(); }}>套用常态分配</button></div></Dialog>}
+    {dialog === "withdraw" && editing && <Dialog title="撤回需求" onClose={close}><p>撤回“{editing.title}”及其关联分配？</p><div className="modal-footer"><button className="button danger" disabled={busy} onClick={async () => { if (await action("withdraw", { demandId: editing.id })) close(); }}>确认撤回</button></div></Dialog>}
+    {dialog === "ai" && plan && <Dialog title="AI 辅助排期" onClose={close}><p className="notice">管理员 ChatGPT 套餐调用尚未接通。</p><p>当前网站登录用于确认身份。远程托管网站调用 ChatGPT 套餐需要额外开通，不能直接沿用现有登录权限。</p><p>现阶段可使用“规则推荐”生成草案，再由管理员调整并提交各组确认。</p><p><a href="https://developers.openai.com/siwc/token-sharing-open-source" target="_blank" rel="noreferrer">查看 OpenAI 官方套餐接入说明</a></p><div className="modal-footer"><button className="button" onClick={close}>返回排期</button></div></Dialog>}
+  </div>;
+}

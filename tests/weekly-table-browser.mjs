@@ -1,0 +1,70 @@
+import { chromium } from "playwright";
+import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
+import ExcelJS from "exceljs";
+const base = process.env.BASE_URL ?? "http://127.0.0.1:5173";
+const browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL ?? "chrome", args: ["--no-sandbox"] });
+mkdirSync("outputs/weekly-table", { recursive: true });
+try {
+  const page = await browser.newPage({ viewport: { width: 1560, height: 1050 } }), errors = [];
+  page.on("pageerror", e => errors.push(e.message));
+  await page.goto(base + "/demo", { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "每周需求与排期", exact: true }).click();
+  await page.getByRole("button", { name: "创建周计划", exact: true }).click();
+  let dialog = page.getByRole("dialog"); await dialog.getByLabel("周起始日期（北京时间周一）").fill("2030-01-07");
+  await dialog.getByRole("button", { name: "创建并收集需求", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "选择参与服务器", exact: true }).click(); dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "取消筛选结果", exact: true }).click();
+  await dialog.locator(".weekly-pick-row").filter({ hasText: "192.0.2.12" }).getByRole("checkbox").check();
+  await dialog.locator(".weekly-pick-row").filter({ hasText: "192.0.2.13" }).getByRole("checkbox").check();
+  await dialog.getByRole("button", { name: "保存参与范围", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  assert.equal(await page.locator(".weekly-server-sheet tbody tr").count(), 2);
+  await page.getByRole("button", { name: "编辑预排期表", exact: true }).click(); dialog = page.getByRole("dialog");
+  for (const row of await dialog.locator("tbody tr").all()) {
+    for (const box of await row.locator(".weekly-group-checks input:checked").all()) await box.uncheck();
+    await row.getByLabel("大模型预训练组", { exact: true }).check(); await row.getByLabel("多模态算法组", { exact: true }).check();
+    await row.getByRole("button", { name: "加冒烟标注", exact: true }).click(); await row.getByRole("button", { name: "加加研标注", exact: true }).click();
+  }
+  await dialog.getByRole("button", { name: "保存预排期", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "需求收集表", exact: true }).click();
+  for (const [group, title] of [["g1", "MM1周训练"], ["g2", "MM2周训练"]]) {
+    await page.getByRole("button", { name: "填写需求", exact: true }).click(); dialog = page.getByRole("dialog");
+    await dialog.getByLabel("使用用途", { exact: true }).fill(title); await dialog.getByLabel("组名", { exact: true }).selectOption(group);
+    await dialog.getByLabel("理想需要多少台").fill("3"); await dialog.getByLabel("协商后需要多少台（管理员填）").fill("2");
+    await dialog.getByLabel("其中多少台支持共用").fill("2"); await dialog.getByLabel("至少多少台在同一柜").fill("2");
+    await dialog.getByRole("button", { name: "保存需求", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  }
+  assert.equal(await page.locator(".weekly-demand-sheet tbody tr").count(), 2);
+  await page.getByRole("button", { name: "提交各组确认", exact: true }).click();
+  await page.getByLabel("演示角色").selectOption("contact");
+  await page.getByRole("button", { name: "确认本组安排", exact: true }).click(); dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "保存确认结果", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  assert.equal(await page.getByRole("button", { name: "编辑预排期表", exact: true }).count(), 0);
+  await page.getByLabel("演示角色").selectOption("admin");
+  await page.getByRole("button", { name: "代确认 / 记录反馈", exact: true }).nth(1).click(); dialog = page.getByRole("dialog");
+  await dialog.getByLabel("代确认原因（必填）").fill("线下会议已与本组核对"); await dialog.getByRole("button", { name: "保存确认结果", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "发布本周方案", exact: true }).click(); dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "确认发布", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "服务器预排期表", exact: true }).click();
+  await page.screenshot({ path: "outputs/weekly-table/desktop.png", fullPage: true });
+  const waiting = page.waitForEvent("download"); await page.getByRole("button", { name: "导出 Excel", exact: true }).click(); const download = await waiting;
+  assert.equal(download.suggestedFilename(), "2030-01-07周需求与排期.xlsx");
+  const path = "outputs/weekly-table/export.xlsx"; await download.saveAs(path);
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(path);
+  assert.equal(workbook.worksheets.length, 2); assert.equal(workbook.worksheets[0].rowCount, 3); assert.equal(workbook.worksheets[1].rowCount, 3);
+  assert.match(workbook.worksheets[0].getCell("H2").text, /大模型预训练组.*多模态算法组/);
+  assert.match(workbook.worksheets[0].getCell("J2").text, /最高优先级/); assert.match(workbook.worksheets[0].getCell("J2").text, /不 kill 程序/);
+  assert.equal(workbook.worksheets[1].getCell("G2").value, 3); assert.equal(workbook.worksheets[1].getCell("H2").value, 2);
+  await page.getByLabel("选择 192.0.2.12", { exact: true }).check();
+  await page.getByRole("button", { name: "清空所选未来排期（1）", exact: true }).click(); dialog = page.getByRole("dialog");
+  await dialog.getByLabel("清空原因").fill("周会新需求重新排期"); await dialog.getByRole("button", { name: "确认清空未来排期", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  assert.match(await page.locator(".weekly-server-sheet tbody tr").first().innerText(), /未来排期已清空/);
+  assert.doesNotMatch(await page.locator(".weekly-server-sheet tbody tr").nth(1).innerText(), /未来排期已清空/);
+  await page.getByRole("button", { name: "重新编排本周", exact: true }).click(); dialog = page.getByRole("dialog"); await dialog.getByRole("button", { name: "开始重新编排", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "AI 辅助排期", exact: true }).click(); dialog = page.getByRole("dialog");
+  assert.match(await dialog.innerText(), /套餐调用尚未接通/); await dialog.getByRole("button", { name: "返回排期", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: "outputs/weekly-table/mobile.png", fullPage: true });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "page must not overflow mobile viewport");
+  assert.deepEqual(errors, []);
+  console.log("PASS: table pool, shared week, negotiated requests, contact confirmation, administrator proxy, publication, Excel export, selected-server clear, reopen, mobile layout and honest AI state");
+} finally { await browser.close(); }

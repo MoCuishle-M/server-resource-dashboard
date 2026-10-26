@@ -78,7 +78,7 @@ import { bookingAvailability, displayBookings } from "@/lib/priority";
 import RequestAssignmentForm from "./request-assignment-form";
 import RequestPriorityForm from "./request-priority-form";
 import RequestExtensionForm from "./request-extension-form";
-import WeeklyPlanning from "./weekly-planning";
+import WeeklyPlanning from "./weekly-table-planning";
 import { extensionResourceIds } from "@/lib/request-extension";
 import { activeDialog, FeedbackContext, OperationFeedback, type OperationNotice } from "./operation-feedback";
 import { copyRequestDraft } from "@/lib/request-draft";
@@ -345,7 +345,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     setAssignmentRequest(null);
     setFaultResource(null);
     if (extendRequest && (s.actor.role !== "contact" || extendRequest.groupId !== s.actor.groupId)) setExtendRequest(null);
-    if (["resource", "bulk-edit", "import"].includes(modal ?? "")) setModal(null);
+    if (["resource", "bulk-edit", "import", "clear-schedules"].includes(modal ?? "")) setModal(null);
   }, [stored, detail, review, partialRequest, cancelRequest, modal]);
   async function refresh(initial = false) {
     try {
@@ -1436,6 +1436,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                           <Pencil size={14} />
                           批量修改
                         </button>
+                        <button className="text-button danger-text" onClick={() => setModal("clear-schedules")}>
+                          <CalendarDays size={14} />清空未来排期
+                        </button>
                         <button
                           className="text-button danger-text"
                           onClick={() => {
@@ -2187,6 +2190,15 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           </form>
         </Modal>
       )}
+      {modal === "clear-schedules" && admin && s && <Modal wide title={`清空所选${selected.length}台服务器的未来排期`} onClose={() => setModal(null)}>
+        <form onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); if (await run({ type: "weekly.table.clear", resourceIds: selected, reason: f.get("reason") }, "所选服务器从现在起的全部排期已清空")) { setSelected([]); setModal(null); } }}>
+          <p className="notice">清空从现在起的全部排期：结束正在进行的排期，取消未来预约，并移除待审批申请和周计划草稿中的相应服务器。已发生的历史、常态模板及特殊用途标注保留。</p>
+          <ul className="weekly-clear-list">{s.resources.filter(r => selected.includes(r.id)).map(r => <li key={r.id}>{r.name} · {r.ip}</li>)}</ul>
+          <p>影响 {s.bookings.filter(b => selected.includes(b.resourceId) && ["scheduled", "preempted"].includes(b.status) && b.endAt > clock).length} 条未来排期。</p>
+          <label className="field"><span>清空原因</span><textarea name="reason" required maxLength={1000} rows={2} /></label>
+          <div className="modal-footer"><button type="button" className="button" onClick={() => setModal(null)}>取消</button><button className="button danger" disabled={busy}>确认清空未来排期</button></div>
+        </form>
+      </Modal>}
       {modal === "bulk-edit" && (
         <Modal
           wide

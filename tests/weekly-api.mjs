@@ -47,7 +47,28 @@ try {
   assert.ok(!JSON.stringify(publicState).includes("本地API专用私有理由"));
   await action({ type: "weekly.publish", planId }, 409);
   await action({ type: "weekly.stage", planId, status: "draft", revision: stale }, 409);
-  console.log("PASS: local HTTP/D1 weekly persistence, private collection, anonymous write denial, group acceptance, formal booking publication, duplicate and stale-write rejection");
+  const tableWeek = new Date(monday.getTime() + 7 * 86400000 + 8 * 3600000).toISOString().slice(0, 10);
+  await action({ type: "weekly.table.create", weekStart: tableWeek });
+  const tablePlan = state.weeklyPlans.find(p => p.weekStart === tableWeek).id;
+  await action({ type: "weekly.table.pool", planId: tablePlan, resourceIds: [resourceId] });
+  const tableTitle = `表格私有需求-${suffix}`;
+  await action({ type: "weekly.table.demand", planId: tablePlan, demand: { groupId: "g1", title: tableTitle, applicantName: "本地申请人", lines: [{ resourceType: "QA周排期", accessMode: "bare", desired: 1, negotiated: 1, shareCount: 0, sameRackCount: 1, sameRackGroupIds: [], requirements: "同柜验证" }] } });
+  await action({ type: "weekly.table.recommend", planId: tablePlan });
+  publicState = await (await visitor.get(base + "/api/state")).json(); assert.ok(!JSON.stringify(publicState).includes(tableTitle));
+  const constant = [{ resourceId, assignments: [{ groupId: "g1", purpose: "常态" }], specialNote: "每天北京时间6–8点冒烟，失败最高优先级" }];
+  await action({ type: "weekly.table.defaults", resourceIds: [resourceId], rows: constant });
+  publicState = await (await visitor.get(base + "/api/state")).json(); assert.equal(publicState.settings.weeklyDefaults, undefined);
+  await action({ type: "weekly.table.stage", planId: tablePlan, status: "confirming" });
+  await action({ type: "weekly.table.publish", planId: tablePlan }, 409);
+  await action({ type: "weekly.table.confirm", planId: tablePlan, groupId: "g1", status: "confirmed", note: "会议确认代录" });
+  await action({ type: "weekly.table.publish", planId: tablePlan });
+  publicState = await (await visitor.get(base + "/api/state")).json(); assert.ok(publicState.weeklyPlans.find(p => p.id === tablePlan).rows.some(r => r.assignments.length === 1));
+  const unauthorizedClear = await visitor.post(base + "/api/action", { headers: { Origin: base }, data: { type: "weekly.table.clear", resourceIds: [resourceId], reason: "越权", revision: state.revision } });
+  assert.equal(unauthorizedClear.status(), 401);
+  await action({ type: "weekly.table.clear", resourceIds: [resourceId], reason: "新需求重排" });
+  const cleared = await (await client.get(base + "/api/state")).json(); assert.ok(!cleared.bookings.some(b => b.resourceId === resourceId && b.status === "scheduled" && b.endAt > new Date().toISOString()));
+  assert.deepEqual(cleared.settings.weeklyDefaults, constant); assert.deepEqual(cleared.weeklyPlans.find(p => p.id === tablePlan).clearedResourceIds, [resourceId]);
+  console.log("PASS: local HTTP/D1 legacy and table plans, negotiated quantities, private drafts/templates, anonymous write denial, confirmation/publication, whole-future clear, snapshots and stale writes");
 } finally {
   if (resourceId) {
     state = await (await client.get(base + "/api/state")).json();
