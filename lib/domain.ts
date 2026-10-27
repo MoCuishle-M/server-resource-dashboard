@@ -905,7 +905,7 @@ export function mutate(
     case "request.changePriority": {
       needAdmin();
       const r = findRequest();
-      if (r.status !== "approved" || r.endAt <= now) fail("只能调整尚未结束的已批准排期", 409);
+      if (!["pending", "approved"].includes(r.status) || r.endAt <= now) fail("只能调整尚未结束的待审批申请或已批准排期", 409);
       if (r.pendingExtension) fail("请先处理待审批续期申请，再调整优先级", 409);
       if (!["normal", "high", "urgent"].includes(action.priority as string)) fail("优先级不正确");
       const priority = action.priority as Priority;
@@ -914,6 +914,16 @@ export function mutate(
       if (resourceIds.some(id => !r.resourceIds.includes(id))) fail("只能调整该申请中的服务器");
       if (resourceIds.some(id => !s.resources.some(resource => resource.id === id && !resource.deleted)))
         fail("部分服务器已删除，请刷新后重试", 409);
+      if (r.status === "pending") {
+        if (resourceIds.length !== r.resourceIds.length) fail("待审批申请需整体调整优先级");
+        const note = text(action.note, "调整原因", 1000);
+        if (action.confirm !== true) fail("请确认优先级调整", 409);
+        const before = structuredClone(r);
+        r.priority = priority;
+        audit("调整申请优先级", "request", [r.id, ...resourceIds].join(","),
+          `${r.purpose}：${priorityLabel[before.priority]} → ${priorityLabel[priority]}，申请仍待审批：${note}`, before, { request: r, note });
+        break;
+      }
       if (resourceIds.some(id => !s.bookings.some(b => b.requestId === r.id && b.resourceId === id && b.status === "scheduled" && b.endAt > now)))
         fail("部分服务器已无剩余排期，请重新选择", 409);
       const note = text(action.note, "调整原因", 1000);

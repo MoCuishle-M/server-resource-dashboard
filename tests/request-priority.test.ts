@@ -111,9 +111,28 @@ test("non-admin, invalid, unchanged, unconfirmed and expired priority edits fail
   assert.throws(() => act(s, action(s), admin, endAt), /尚未结束/);
   const cancelled = act(s, { type: "request.cancel", id: s.requests[0].id });
   assert.throws(() => act(cancelled, action(cancelled)), /尚未结束/);
-  const pending = setup(); pending.requests[0].status = "pending";
-  assert.throws(() => act(pending, action(pending)), /已批准/);
   assert.deepEqual(s, snapshot);
+});
+
+test("admin changes pending priority without approval or bookings; approval uses the new value", () => {
+  let s = setup();
+  s = act(s, { type: "request.create", resourceIds: s.resources.map(r => r.id), groupId: "g2", purpose: "待审批测试", priority: "normal", startAt, endAt });
+  const id = s.requests.at(-1)!.id;
+  const update = { ...action(s), id };
+  const snapshot = structuredClone(s);
+  for (const role of ["visitor", "member", "contact"] as const) assert.throws(() => act(s, update, { ...contact, role }), /仅服务器管理员/);
+  for (const extra of [{ resourceIds: [s.resources[0].id] }, { priority: "custom" }, { priority: "normal" }, { note: " " }, { confirm: false }]) assert.throws(() => act(s, { ...update, ...extra }));
+  assert.throws(() => act(s, update, admin, endAt), /尚未结束/);
+  assert.deepEqual(s, snapshot);
+  s = act(s, update);
+  assert.equal(s.requests.at(-1)!.priority, "high");
+  assert.equal(s.requests.at(-1)!.status, "pending");
+  assert.deepEqual(s.bookings, snapshot.bookings);
+  assert.equal(s.audits.at(-1)!.action, "调整申请优先级");
+  s = act(s, { ...update, priority: "urgent" });
+  s = act(s, { type: "request.review", id, approve: true, preempt: true, note: "批准调整后的申请" });
+  assert(s.bookings.filter(b => b.requestId === id).every(b => b.priority === "urgent"));
+  assert.equal(s.requests.at(-1)!.status, "approved");
 });
 
 test("priority audit and split requests respect hidden-resource privacy", () => {
@@ -155,5 +174,13 @@ test("real D1 persists priority splits and rejects a stale competing edit withou
     assert.equal(persisted.audits.filter(a => a.action === "调整排期优先级").length, 1);
     assert.deepEqual(persisted.requests.find(r => r.sourceRequestId === loaded.requests[0].id), winner.requests.find(r => r.sourceRequestId === loaded.requests[0].id));
     assert.equal(groupUsage(persisted, "g2", endAt).hours, 3);
+    const pending = act(persisted, { type: "request.create", resourceIds: [persisted.resources[0].id], groupId: "g3", purpose: "持久化待审批优先级", priority: "normal", startAt, endAt });
+    await saveState(db, persisted, pending);
+    const edited = act(pending, { ...action(pending, "urgent"), id: pending.requests.at(-1)!.id, resourceIds: [pending.resources[0].id] });
+    await saveState(db, pending, edited);
+    const reloaded = await loadState(db);
+    assert.equal(reloaded.requests.find(r => r.id === pending.requests.at(-1)!.id)!.priority, "urgent");
+    assert.equal(reloaded.requests.find(r => r.id === pending.requests.at(-1)!.id)!.status, "pending");
+    assert.deepEqual(reloaded.bookings, pending.bookings);
   } finally { await mf.dispose(); }
 });

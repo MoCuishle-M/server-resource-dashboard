@@ -19,6 +19,14 @@ export default function RequestPriorityForm({ request, bookings, resources, grou
   const groupName = (b: Pick<Booking, "groupId" | "purpose">) => `${groups.find(g => g.id === b.groupId)?.name ?? "历史团队"} · ${b.purpose}`;
   const resourceName = (id: string) => resources.find(r => r.id === id)?.name ?? "历史服务器";
   function choose(next: string[]) { setIds(next); setConfirm(false); }
+  if (request.status === "pending") return <form className="assignment-form" onSubmit={async e => { e.preventDefault(); await onConfirm({ resourceIds: request.resourceIds, priority, note: note.trim(), confirm }); }}>
+    <p className="notice">本次调整整个申请的优先级，申请仍待审批；批准时会按新优先级校验冲突并安排资源。</p>
+    <section className="assignment-selected"><strong>{groupName(request)}</strong><p>当前：{priorityLabel[request.priority]} · {request.resourceIds.length} 台服务器</p></section>
+    <label className="field"><span>调整后的优先级 *</span><select aria-label="调整后的优先级" value={priority} onChange={e => { setPriority(e.target.value as Priority); setConfirm(false); }}>{(["normal", "high", "urgent"] as const).map(p => <option key={p} value={p}>{priorityLabel[p]}</option>)}</select></label>
+    <label className="field"><span>调整原因 *</span><textarea aria-label="调整优先级原因" required maxLength={1000} rows={3} value={note} onChange={e => setNote(e.target.value)} /></label>
+    <label className="checkbox-label"><input type="checkbox" checked={confirm} onChange={e => setConfirm(e.target.checked)} />确认调整申请优先级，申请仍待审批</label>
+    <div className="modal-footer"><button type="button" className="button" onClick={onClose}>取消</button><button className="button primary" disabled={busy || priority === request.priority || !note.trim() || !confirm}>保存优先级</button></div>
+  </form>;
   return <form className="assignment-form" onSubmit={async e => { e.preventDefault(); await onConfirm({ resourceIds: chosen.map(r => r.id), priority, note: note.trim(), confirm }); }}>
     <p className="notice">仅管理员可调整已批准排期。正在使用的任务从保存时刻起变更，未来任务从原开始时刻起变更；过去的优先级与使用历史保留。已取消、已释放及旧的抢占空档保持原记录。</p>
     <section className="assignment-selected" aria-label="本次调整优先级的任务"><strong>{groupName(request)}</strong><p>当前：{priorityLabel[request.priority]} · 已选 {chosen.length} / {eligible.length} 台服务器</p></section>

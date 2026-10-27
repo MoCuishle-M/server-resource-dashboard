@@ -474,7 +474,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const canExtend = (r: UsageRequest) => canApply && (admin || actor.groupId === r.groupId)
     && r.status === "approved" && r.endAt > clock && (admin || !r.pendingExtension)
     && extensionResourceIds(r, s?.bookings ?? [], clock, false, s?.resources).length > 0;
-  const canChangePriority = (r: UsageRequest) => admin && r.status === "approved" && r.endAt > clock && !r.pendingExtension && remainingBookings(r).length > 0;
+  const canChangePriority = (r: UsageRequest) => admin && r.endAt > clock && !r.pendingExtension &&
+    (r.status === "pending" || (r.status === "approved" && remainingBookings(r).length > 0));
   function openPriority(r: UsageRequest, resourceId?: string) {
     setToast(null); setDetail(null); setReview(null); setPriorityResourceId(resourceId); setPriorityRequest(r);
   }
@@ -3128,9 +3129,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             }
           }} />
       </Modal>}
-      {priorityRequest && admin && s && <Modal wide title="调整排期优先级" sub={`${groupName(priorityRequest.groupId)} · ${priorityRequest.purpose}`} onClose={() => setPriorityRequest(null)}>
+      {priorityRequest && admin && s && <Modal wide title={priorityRequest.status === "pending" ? "调整申请优先级" : "调整排期优先级"} sub={`${groupName(priorityRequest.groupId)} · ${priorityRequest.purpose}`} onClose={() => setPriorityRequest(null)}>
         <RequestPriorityForm request={s.requests.find(r => r.id === priorityRequest.id) ?? priorityRequest} bookings={s.bookings} resources={s.resources} groups={s.groups} clock={clock} busy={busy} initialResourceId={priorityResourceId}
-          onClose={() => setPriorityRequest(null)} onConfirm={async value => { if (await run({ type: "request.changePriority", id: priorityRequest.id, ...value }, "优先级已调整，排期使用权已更新")) setPriorityRequest(null); }} />
+          onClose={() => setPriorityRequest(null)} onConfirm={async value => { if (await run({ type: "request.changePriority", id: priorityRequest.id, ...value }, priorityRequest.status === "pending" ? "申请优先级已调整，仍待审批" : "优先级已调整，排期使用权已更新")) setPriorityRequest(null); }} />
       </Modal>}
       {assignmentRequest && admin && s && (
         <Modal wide title="调整使用组与事项" sub={`${groupName(assignmentRequest.groupId)} · ${assignmentRequest.purpose} · ${fmt(assignmentRequest.startAt)} → ${fmt(assignmentRequest.endAt)}`}
