@@ -521,6 +521,60 @@ test("revoking an older contact preserves the replacement and booking history", 
   assert.deepEqual(s.requests, before.requests);
   assert.equal(s.accounts[1].status, "approved");
 });
+test("admin corrects pending and approved contacts, moves group permissions without rewriting history", () => {
+  let s = apply(setup(), { type: "account.apply", groupId: "g1", employeeId: "wrong", displayName: "填错" }, member);
+  const id = s.accounts[0].id;
+  const edit = { type: "account.update", id, groupId: "g2", employeeId: "123", displayName: "更正" };
+  assert.throws(() => apply(s, edit, member), /仅服务器管理员/);
+  s = apply(s, edit);
+  assert.equal(s.accounts[0].status, "pending");
+  assert.equal(s.accounts[0].email, member.email);
+  assert.equal(s.groups[1].contactName, "");
+  s = apply(s, { type: "account.review", id, approve: true });
+  const before = structuredClone(s);
+  s = apply(s, { ...edit, groupId: "g3", displayName: "更正后", employeeId: "456" });
+  assert.equal(s.groups[1].contactName, "");
+  assert.equal(s.groups[2].contactName, "更正后");
+  assert.equal(s.groups[2].employeeId, "456");
+  assert.equal(s.accounts[0].groupId, "g3");
+  assert.equal(s.accounts[0].status, "approved");
+  assert.deepEqual(s.requests, before.requests);
+  assert.deepEqual(s.bookings, before.bookings);
+  assert.equal(s.audits.at(-1)!.action, "更正接口人资料");
+  assert.throws(() => apply(s, { ...edit, displayName: " " }), /姓名/);
+  assert.throws(() => apply(s, { ...edit, groupId: "missing" }), /所属组/);
+});
+
+test("admin corrects and restores rejected or revoked accounts with duplicate and stale guards", () => {
+  let s = apply(setup(), { type: "account.apply", groupId: "g1", employeeId: "123", displayName: "原申请" }, member);
+  const id = s.accounts[0].id;
+  s = apply(s, { type: "account.review", id, approve: false });
+  const restore = { type: "account.restore", id };
+  assert.throws(() => apply(s, restore, visitor), /仅服务器管理员/);
+  s = apply(s, { type: "account.update", id, groupId: "g2", employeeId: "456", displayName: "正确资料" });
+  assert.equal(s.accounts[0].status, "rejected");
+  s = apply(s, restore);
+  assert.equal(s.accounts[0].status, "approved");
+  assert.equal(s.groups[1].contactName, "正确资料");
+  assert.equal(s.groups[1].employeeId, "456");
+  assert.equal(s.audits.at(-1)!.action, "重新授予接口人权限");
+  assert.throws(() => apply(s, restore), /已被处理/);
+  s = apply(s, { type: "account.revoke", id });
+  s = apply(s, restore);
+  assert.equal(s.accounts[0].status, "approved");
+  s = apply(s, { type: "account.apply", groupId: "g3", employeeId: "other", displayName: "另一个人" }, { ...member, userId: "other" });
+  const otherId = s.accounts[1].id;
+  s = apply(s, { type: "account.review", id: otherId, approve: true });
+  assert.throws(() => apply(s, { type: "account.update", id: otherId, groupId: "g3", employeeId: "456", displayName: "另一个人" }), /工号已有认证/);
+  s = apply(s, { type: "account.revoke", id });
+  s = apply(s, { type: "account.update", id, groupId: "g2", employeeId: "other", displayName: "正确资料" });
+  assert.throws(() => apply(s, restore), /工号已有认证/);
+  assert.equal(s.accounts[0].status, "rejected");
+  s.accounts[0].role = "admin";
+  assert.throws(() => apply(s, restore), /已被处理/);
+  assert.throws(() => apply(s, { type: "account.update", id, groupId: "g1", employeeId: "123", displayName: "x" }), /账号不存在/);
+});
+
 test("public state hides account emails, stable ids and raw audit payloads", () => {
   let s = apply(
     setup(),

@@ -643,14 +643,41 @@ export function mutate(
       );
       break;
     }
+    case "account.update": {
+      needAdmin();
+      const a = s.accounts.find((a) => a.id === action.id && a.role === "contact");
+      if (!a) fail("接口人账号不存在", 404);
+      const before = { ...a };
+      const g = s.groups.find((g) => g.id === action.groupId);
+      if (!g) fail("请选择所属组");
+      const displayName = text(action.displayName, "姓名", 50);
+      const employeeId = text(action.employeeId, "工号", 50);
+      if (a.status === "approved" && s.accounts.some((x) => x.id !== a.id && x.status === "approved" && x.employeeId === employeeId))
+        fail("该工号已有认证账号");
+      if (a.status === "approved") {
+        // Clear only the old matching profile before moving this active contact.
+        s.groups = currentGroupContacts({ ...s, accounts: s.accounts.map((x) => x.id === a.id ? { ...x, status: "rejected" } : x) });
+      }
+      Object.assign(a, { displayName, employeeId, groupId: g.id });
+      if (a.status === "approved") {
+        const target = s.groups.find((group) => group.id === g.id)!;
+        target.contactName = a.displayName;
+        target.employeeId = a.employeeId;
+      }
+      audit("更正接口人资料", "account", a.id, `更正 ${before.displayName} 的姓名、工号或所属组`, before, a);
+      break;
+    }
+    case "account.restore":
     case "account.review": {
       needAdmin();
       const a = s.accounts.find((a) => a.id === action.id);
-      if (!a || a.role !== "contact" || a.status !== "pending") fail("认证申请已被处理或不存在", 409);
+      const restore = action.type === "account.restore";
+      if (!a || a.role !== "contact" || a.status !== (restore ? "rejected" : "pending")) fail("认证申请已被处理或不存在", 409);
       const before = { ...a };
-      if (typeof action.approve !== "boolean") fail("审核结果不正确");
+      const approve = restore || action.approve;
+      if (typeof approve !== "boolean") fail("审核结果不正确");
       if (
-        action.approve &&
+        approve &&
         s.accounts.some(
           (x) =>
             x.id !== a.id &&
@@ -659,17 +686,17 @@ export function mutate(
         )
       )
         fail("该工号已有认证账号");
-      a.status = action.approve ? "approved" : "rejected";
-      if (action.approve) {
+      a.status = approve ? "approved" : "rejected";
+      if (approve) {
         const g = s.groups.find((g) => g.id === a.groupId)!;
         g.contactName = a.displayName;
         g.employeeId = a.employeeId;
       }
       audit(
-        action.approve ? "通过接口人认证" : "拒绝接口人认证",
+        restore ? "重新授予接口人权限" : approve ? "通过接口人认证" : "拒绝接口人认证",
         "account",
         a.id,
-        `${a.displayName} 的接口人认证${action.approve ? "通过" : "被拒绝"}`,
+        restore ? `重新授予 ${a.displayName} 在 ${s.groups.find((g) => g.id === a.groupId)!.name} 的接口人权限` : `${a.displayName} 的接口人认证${approve ? "通过" : "被拒绝"}`,
         before,
         a,
       );

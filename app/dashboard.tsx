@@ -1851,6 +1851,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                                     </td>
                                     <td className="align-right">
                                       <div className="row-actions">
+                                        <button className="text-button" disabled={busy} onClick={() => setModal(`account-edit:${a.id}`)}>更正资料</button>
+                                        {a.status === "rejected" && <button className="text-button orange-text" disabled={busy} onClick={() => setModal(`account-restore:${a.id}`)}>重新授权</button>}
                                         {a.status === "pending" ? (
                                           <>
                                             <button
@@ -3388,6 +3390,25 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           )}
         </Modal>
       )}
+      {admin && (modal?.startsWith("account-edit:") || modal?.startsWith("account-restore:")) && (() => {
+        if (!s) return null;
+        const restore = modal.startsWith("account-restore:");
+        const account = s.accounts.find((a) => a.id === modal.split(":")[1]);
+        if (!account) return null;
+        return <Modal title={restore ? "重新授予接口人权限" : "更正接口人资料"} sub={restore ? "确认后，该账号可申请和取消所属组预约，组卡片将同步显示该接口人。" : "可更正姓名、工号和所属组。已认证账号的更正立即生效；待审核或已拒绝账号仍保留原认证状态。"} onClose={() => setModal(null)}>
+          <p className="notice">登录邮箱：{account.email}</p>
+          {restore ? <><p>{account.displayName} · {account.employeeId} · {groupName(account.groupId)}</p><div className="modal-footer"><button className="button" onClick={() => setModal(null)}>取消</button><button className="button primary" disabled={busy} onClick={async () => { if (await run({ type: "account.restore", id: account.id }, "接口人权限已重新授予")) setModal(null); }}>确认重新授权</button></div></> :
+            <form key={account.id} onSubmit={async (e) => { e.preventDefault(); if (await run({ type: "account.update", id: account.id, ...Object.fromEntries(new FormData(e.currentTarget)) }, "接口人资料已更正")) setModal(null); }}>
+              <div className="form-grid">
+                <Field label="姓名 *"><input name="displayName" required maxLength={50} defaultValue={account.displayName} /></Field>
+                <Field label="工号 *"><input name="employeeId" required maxLength={50} defaultValue={account.employeeId} /></Field>
+                <Field label="所属组 *" wide><select name="groupId" required defaultValue={account.groupId}>{s.groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
+              </div>
+              <p className="notice">已认证账号更换所属组后，将按新组权限操作；原有申请、预约和历史记录保留。</p>
+              <div className="modal-footer"><button type="button" className="button" onClick={() => setModal(null)}>取消</button><button className="button primary" disabled={busy}>保存更正</button></div>
+            </form>}
+        </Modal>;
+      })()}
       {modal?.startsWith("revoke:") && (
         <Modal
           title="撤销接口人权限"

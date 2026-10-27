@@ -45,6 +45,17 @@ test("D1 clears contact data on revoke and repairs legacy snapshots on read", as
     assert.equal(repaired.groups[0].contactName, "");
     assert.equal(repaired.groups[0].employeeId, "");
     assert.equal(repaired.accounts[0].status, "rejected");
+    const corrected = mutate(repaired, admin, { type: "account.update", id: repaired.accounts[0].id, groupId: "g2", employeeId: "456", displayName: "更正接口人" }, now);
+    await saveState(db, repaired, corrected);
+    const pendingRestore = await loadState(db);
+    assert.equal(pendingRestore.accounts[0].status, "rejected");
+    assert.equal(pendingRestore.accounts[0].groupId, "g2");
+    const restored = mutate(pendingRestore, admin, { type: "account.restore", id: pendingRestore.accounts[0].id }, now);
+    await saveState(db, pendingRestore, restored);
+    const final = await loadState(db);
+    assert.equal(final.accounts[0].status, "approved");
+    assert.equal(final.groups[1].contactName, "更正接口人");
+    assert.equal(final.groups[1].employeeId, "456");
   } finally { await mf.dispose(); }
 });
 
