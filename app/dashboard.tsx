@@ -3391,7 +3391,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
       {modal?.startsWith("revoke:") && (
         <Modal
           title="撤销接口人权限"
-          sub="该账号将无法继续申请或取消本组预约，已有预约会保留。"
+          sub="该账号将无法继续申请或取消本组预约；组资料中对应的接口人姓名和工号会清除，已有预约会保留。"
           onClose={() => setModal(null)}
         >
           <div className="modal-footer">

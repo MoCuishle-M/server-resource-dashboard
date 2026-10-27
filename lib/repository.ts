@@ -1,6 +1,7 @@
 import type { State } from "./types";
 import { emptyState, DomainError } from "./domain";
 import { platformGroup, PLATFORM_GROUP_ID } from "./lingshu";
+import { currentGroupContacts } from "./group-contact";
 const tables = [
   "resources",
   "groups",
@@ -28,6 +29,7 @@ export async function loadState(db: D1Database): Promise<State> {
       (s[t] as unknown[]) = rows.map((r) => JSON.parse(r.payload));
   });
   if (!s.groups.some(g => g.id === PLATFORM_GROUP_ID)) s.groups.push(platformGroup());
+  s.groups = currentGroupContacts(s);
   const settingsRow = results[tables.length + 1].results[0] as { payload: string } | undefined;
   if (settingsRow) s.settings = { ...s.settings, ...JSON.parse(settingsRow.payload) };
   s.resources = s.resources.map((r) => ({

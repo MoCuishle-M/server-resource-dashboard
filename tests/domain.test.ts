@@ -484,6 +484,42 @@ test("identity enrollment requires admin verification, protects duplicate employ
   );
   s = apply(s, { type: "account.revoke", id: s.accounts[0].id });
   assert.equal(s.accounts[0].status, "rejected");
+  assert.equal(s.groups[1].contactName, "");
+  assert.equal(s.groups[1].employeeId, "");
+});
+
+test("legacy revoked profiles are hidden for every viewer without clearing independent contacts", () => {
+  let s = apply(setup(), { type: "account.apply", groupId: "g1", employeeId: "123", displayName: "张三" }, member);
+  s = apply(s, { type: "account.review", id: s.accounts[0].id, approve: true });
+  s.accounts[0].status = "rejected"; // Snapshot written by the old revoke handler.
+  for (const actor of [admin, member, visitor]) {
+    const visible = serializePublic(s, actor, now, true);
+    assert.equal(visible.groups[0].contactName, "");
+    assert.equal(visible.groups[0].employeeId, "");
+  }
+  assert.equal(s.groups[0].contactName, "张三"); // Serialization does not mutate history.
+  s.groups[0].contactName = "新接口人";
+  s.groups[0].employeeId = "456";
+  assert.equal(serializePublic(s, visitor, now, true).groups[0].contactName, "新接口人");
+  s = apply(s, { type: "account.apply", groupId: "g1", employeeId: "456", displayName: "新接口人" }, { ...member, userId: "new" });
+  s = apply(s, { type: "account.review", id: s.accounts[1].id, approve: false });
+  // A later approval of the same profile must remain visible.
+  s.accounts.push({ ...s.accounts[1], id: "active", userId: "active", status: "approved" });
+  assert.equal(serializePublic(s, visitor, now, true).groups[0].contactName, "新接口人");
+});
+
+test("revoking an older contact preserves the replacement and booking history", () => {
+  let s = apply(setup(), { type: "account.apply", groupId: "g1", employeeId: "123", displayName: "旧接口人" }, member);
+  s = apply(s, { type: "account.review", id: s.accounts[0].id, approve: true });
+  s = apply(s, { type: "account.apply", groupId: "g1", employeeId: "456", displayName: "新接口人" }, { ...member, userId: "new" });
+  s = apply(s, { type: "account.review", id: s.accounts[1].id, approve: true });
+  const before = structuredClone(s);
+  s = apply(s, { type: "account.revoke", id: s.accounts[0].id });
+  assert.equal(s.groups[0].contactName, "新接口人");
+  assert.equal(s.groups[0].employeeId, "456");
+  assert.deepEqual(s.bookings, before.bookings);
+  assert.deepEqual(s.requests, before.requests);
+  assert.equal(s.accounts[1].status, "approved");
 });
 test("public state hides account emails, stable ids and raw audit payloads", () => {
   let s = apply(

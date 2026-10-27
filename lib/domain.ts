@@ -16,6 +16,7 @@ import { applyWeeklyAction, visibleWeeklyState } from "./weekly-actions";
 import { applyWeeklyTableAction } from "./weekly-table-actions";
 import { bookingAvailability, displacesBooking, priorityLabel, priorityRank } from "./priority";
 import { priorityAdjustmentPlan } from "./priority-adjustment";
+import { currentGroupContacts } from "./group-contact";
 export { priorityLabel, priorityRank } from "./priority";
 export class DomainError extends Error {
   constructor(
@@ -683,6 +684,7 @@ export function mutate(
       if (!a) fail("接口人账号不存在", 404);
       const before = { ...a };
       a.status = "rejected";
+      s.groups = currentGroupContacts(s);
       audit(
         "撤销接口人权限",
         "account",
@@ -1059,6 +1061,7 @@ export function serializePublic(
   return {
     ...s,
     ...weekly,
+    groups: currentGroupContacts(s),
     settings: actor.role === "admin" ? s.settings : { announcement: s.settings.announcement, authorSignature: s.settings.authorSignature },
     invitations: actor.role === "admin" ? s.invitations : [],
     accounts:

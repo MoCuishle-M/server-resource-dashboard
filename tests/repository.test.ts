@@ -23,6 +23,31 @@ const resource = {
   location: "",
   note: "",
 };
+test("D1 clears contact data on revoke and repairs legacy snapshots on read", async () => {
+  const mf = new Miniflare({ modules: true, script: 'export default {fetch(){return new Response("ok")}}', compatibilityDate: "2026-05-15", d1Databases: ["DB"] });
+  try {
+    const db = (await mf.getD1Database("DB")) as unknown as D1Database;
+    const sql = (await Promise.all((await readdir("drizzle")).filter(n => n.endsWith(".sql")).sort().map(n => readFile(`drizzle/${n}`, "utf8")))).join("\n--> statement-breakpoint\n");
+    await db.batch(sql.split("--> statement-breakpoint").filter(x => x.trim()).map(x => db.prepare(x)));
+    const initial = await loadState(db);
+    const member: Actor = { ...admin, userId: "contact", role: "member" };
+    let s = mutate(initial, member, { type: "account.apply", groupId: "g1", employeeId: "123", displayName: "接口人" }, now);
+    s = mutate(s, admin, { type: "account.review", id: s.accounts[0].id, approve: true }, now);
+    await saveState(db, initial, s);
+    const before = await loadState(db);
+    const revoked = mutate(before, admin, { type: "account.revoke", id: before.accounts[0].id }, now);
+    await saveState(db, before, revoked);
+    const raw = await db.prepare("SELECT payload FROM groups WHERE id='g1'").first<{ payload: string }>();
+    assert.equal(JSON.parse(raw!.payload).contactName, "");
+    assert.equal(JSON.parse(raw!.payload).employeeId, "");
+    await db.prepare("UPDATE groups SET payload=? WHERE id='g1'").bind(JSON.stringify(before.groups[0])).run();
+    const repaired = await loadState(db);
+    assert.equal(repaired.groups[0].contactName, "");
+    assert.equal(repaired.groups[0].employeeId, "");
+    assert.equal(repaired.accounts[0].status, "rejected");
+  } finally { await mf.dispose(); }
+});
+
 test("real D1 persistence, atomic rollback and concurrent writers", async () => {
   const mf = new Miniflare({
     modules: true,
