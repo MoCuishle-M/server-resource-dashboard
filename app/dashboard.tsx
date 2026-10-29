@@ -64,6 +64,7 @@ import {
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
+import ListPagination, { useListPagination } from "./list-pagination";
 import type { TimelineRange } from "@/lib/schedule";
 import { resourceSearch } from "@/lib/resource-search";
 import { auditRange, auditTime, filterAudits, type AuditRange } from "@/lib/audit-search";
@@ -511,6 +512,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           (b) => b.resourceId === r.id && b.groupId === groupFilter,
         )),
   );
+  const resourcePageKey = JSON.stringify([search, typeFilter, modeFilter, stateFilter, groupFilter]);
+  const overviewPagination = useListPagination(filtered, "overview-page-size-v1", resourcePageKey, 10);
+  const resourcePagination = useListPagination(filtered, "resources-page-size-v1", resourcePageKey);
   const historyTypeOptions = [...new Set((s?.audits ?? []).map(a => a.action))];
   const visibleAudits = filterAudits(s?.audits ?? [], { types: historyTypes, search, ...historyRange });
   const orderedRequests = [...(s?.requests ?? [])].sort((a, b) =>
@@ -640,7 +644,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
       ).length,
     })) ?? [];
   const conflicts = review && s ? approvalConflicts(s, review, clock) : [];
-  const showResourceTable = (limit?: number) => (
+  const showResourceTable = (rows: Resource[]) => (
     <div className="table-scroll">
       <table className="resource-table">
         <thead>
@@ -673,7 +677,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           </tr>
         </thead>
         <tbody>
-          {filtered.slice(0, limit).map((r) => {
+          {rows.map((r) => {
             const usage = currentResourceUsage(s!, r.id, clock);
             const b = usage.bookings[0];
             return (
@@ -1149,6 +1153,15 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         </footer>
                       </article>
                     </section>
+                    <section className="resource-category-stats" aria-label="区域型号统计">
+                      {([
+                        ["blue", "A5", "蓝区 A5"], ["green", "A5", "绿区 A5"],
+                        ["blue", "A3", "蓝区 A3"], ["green", "A3", "绿区 A3"],
+                      ] as const).map(([zone, family, label]) => <article key={`${zone}-${family}`} className={`resource-category-stat zone-${zone}`}>
+                        <span><i />{label}</span>
+                        <strong>{resources.filter(r => r.zone === zone && r.family === family).length}<small>台</small></strong>
+                      </article>)}
+                    </section>
                     <section className="overview-split">
                       <article className="panel slot-panel">
                         <div className="section-heading">
@@ -1285,16 +1298,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                           </button>
                         </div>
                       </div>
-                      {showResourceTable(8)}
-                      {resources.length > 8 && (
-                        <button
-                          className="table-footer"
-                          onClick={() => navigate("resources")}
-                        >
-                          查看全部 {resources.length} 台服务器{" "}
-                          <ChevronRight size={14} />
-                        </button>
-                      )}
+                      <ListPagination pagination={overviewPagination} label="资源实时状态" />
+                      {showResourceTable(overviewPagination.rows)}
+                      <ListPagination pagination={overviewPagination} label="资源实时状态" bottom />
                     </section>
                     <div className="bottom-note">
                       <span className="live-dot" />
@@ -1458,7 +1464,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         </button>
                       </div>
                     )}
-                    {showResourceTable()}
+                    <ListPagination pagination={resourcePagination} label="资源清单" />
+                    {showResourceTable(resourcePagination.rows)}
+                    <ListPagination pagination={resourcePagination} label="资源清单" bottom />
                   </section>
                 )}
                 {view === "schedule" && (

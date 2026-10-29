@@ -6,6 +6,7 @@ import { chinaDate, resourceSharingMode } from "@/lib/domain";
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import { resourceSearch } from "@/lib/resource-search";
 import ResourceTypeFilter from "./resource-type-filter";
+import ListPagination, { useListPagination } from "./list-pagination";
 import { calendarRange, customRange, layoutBookings, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
 import type { Booking, Group, Resource, WeeklyPlan } from "@/lib/types";
 import { scheduleNotes } from "@/lib/schedule-notes";
@@ -70,6 +71,8 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
     && (!family || (r.family || "unset") === family) && (!zone || (r.zone || "unset") === zone))
     .map(resource => ({ resource, notes: scheduleNotes(weeklyPlans, resource.id, range), layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range) }))
     .filter(row => !group || row.layout.bars.length > 0);
+  const pagination = useListPagination(resourceRows, "schedule-page-size-v1",
+    JSON.stringify([search, types, group, family, zone, range.startAt, range.endAt]));
   const fieldValue = (r: Resource, field: ResourceField) => {
     switch (field) {
       case "family": return r.family || "未登记类型";
@@ -142,6 +145,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
       {(search || family || zone || group || types !== null) && <button className="text-button" onClick={() => { setSearch(""); setFamily(""); setZone(""); setGroup(""); setTypes(null); }}>清除筛选</button>}
     </div>
     <p id="schedule-search-help" className="resource-search-help">多个 IP 用空格、逗号或换行分隔；也可搜索名称、规格、位置或备注。悬停排期查看完整理由和起止时间。</p>
+    <ListPagination pagination={pagination} label="资源时间线" />
     <div className="table-scroll schedule-scroll" tabIndex={0} aria-label="连续时间排期表，可横向滚动">
       <table className="schedule-table" aria-label="服务器连续时间排期">
         <colgroup><col className="schedule-server-col" /><col /></colgroup>
@@ -155,7 +159,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
             </span>)}
           </div>
         </th></tr></thead>
-        <tbody>{resourceRows.map(({ resource: r, layout, notes }) => <tr key={r.id}>
+        <tbody>{pagination.rows.map(({ resource: r, layout, notes }) => <tr key={r.id}>
           <td className="schedule-server">
             <div className="schedule-resource-line"><button className="schedule-resource-info" aria-label={`查看服务器 ${r.ip} 详情`} onClick={() => onDetail(r)}>{fields.map(field => <span key={field} className={`schedule-field schedule-field-${field}`} title={`${resourceFields.find(([key]) => key === field)![1]}：${fieldValue(r, field)}`}>{fieldValue(r, field)}</span>)}</button>
             <button className="icon-button schedule-apply" aria-label="申请" title={r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请此服务器"} disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={14} /></button></div>
@@ -188,6 +192,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
       </table>
       {!resourceRows.length && <div className="empty"><Server size={28} /><h3>{resources.length ? "没有符合条件的排期资源" : "添加资源后即可查看排期"}</h3></div>}
     </div>
+    <ListPagination pagination={pagination} label="资源时间线" bottom />
     <div className="schedule-legend priority-legend"><span><i className="priority-swatch normal" />普通</span><span><i className="priority-swatch high" />高优</span><span><i className="priority-swatch urgent" />紧急</span><span><i className="priority-swatch blocked" />斜纹：被抢占，排期保留</span><span>同级共用仅适用于共享服务器</span></div>
   </section>;
 }
