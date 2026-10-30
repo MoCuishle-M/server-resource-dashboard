@@ -77,6 +77,34 @@ function request(
 function approve(s: State, id = s.requests.at(-1)!.id) {
   return apply(s, { type: "request.review", id, approve: true, note: "" });
 }
+test("contacts cancel pending requests before, during and after the planned interval without creating bookings", () => {
+  const pending = request(setup());
+  const r = pending.requests[0];
+  for (const at of [now, "2026-10-20T05:00:00.000Z", "2026-10-21T00:00:00.000Z"]) {
+    const s = mutate(pending, contact, { type: "request.cancel", id: r.id, note: "计划变更" }, at);
+    assert.deepEqual(s.requests[0], { ...r, status: "cancelled" });
+    assert.deepEqual(s.bookings, pending.bookings);
+    const audit = s.audits.at(-1)!;
+    assert.equal(audit.actorId, contact.userId);
+    assert.equal(audit.action, "取消申请");
+    assert.equal(JSON.parse(audit.before).status, "pending");
+    assert.equal(JSON.parse(audit.after).status, "cancelled");
+    assert.match(audit.summary, /计划变更/);
+    assert.throws(() => mutate(s, admin, { type: "request.review", id: r.id, approve: true }, at), /已处理/);
+    assert.equal(pending.requests[0].status, "pending");
+  }
+});
+test("pending cancellation enforces contact and group permissions and rejects repeat cancellation", () => {
+  const pending = request(setup());
+  const action = { type: "request.cancel", id: pending.requests[0].id };
+  for (const who of [visitor, member, { ...contact, groupId: "g2" }]) {
+    assert.throws(() => apply(pending, action, who), /认证|本组申请/);
+  }
+  const s = apply(pending, action, contact);
+  assert.equal(s.requests[0].status, "cancelled");
+  assert.throws(() => apply(s, action, contact), /已经结束/);
+  assert.equal(apply(pending, action, admin).requests[0].status, "cancelled");
+});
 const partialRange = { startAt: "2026-10-20T04:00:00.000Z", endAt: "2026-10-20T06:00:00.000Z" };
 test("late approval accepts remaining time and preserves the original plan and actual review time", () => {
   const base = setup();

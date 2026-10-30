@@ -462,6 +462,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const requestBookings = (r: UsageRequest) => (s?.bookings ?? []).filter(b => b.requestId === r.id);
   const remainingBookings = (r: UsageRequest) => requestBookings(r).filter(b => b.status === "scheduled" && b.endAt > clock);
   const canAdjust = (r: UsageRequest) => canApply && (admin || actor.groupId === r.groupId) && r.status === "approved" && remainingBookings(r).length > 0;
+  const canCancel = (r: UsageRequest) => canApply && (admin || actor.groupId === r.groupId) &&
+    (r.status === "pending" || (r.status === "approved" && remainingBookings(r).length > 0));
+  function openCancel(r: UsageRequest) {
+    setReview(null);
+    setCancelRequest(r);
+    setReviewNote("");
+  }
   const canReassign = (r: UsageRequest) => admin && r.endAt > clock &&
     !r.pendingExtension &&
     (r.status === "pending" || (r.status === "approved" && remainingBookings(r).length > 0));
@@ -1661,19 +1668,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                                     </>
                                   )}
                                   {canAdjust(r) && <button className="text-button orange-text" onClick={() => openPartialCancel(r)}>取消部分时段</button>}
-                                  {canApply && (admin || actor.groupId === r.groupId) &&
-                                    ["pending", "approved"].includes(
-                                      r.status,
-                                    ) &&
-                                    (r.status === "pending" ? r.endAt > clock : remainingBookings(r).length > 0) && (
+                                  {canCancel(r) && (
                                       <button
-                                        className="text-button"
-                                        onClick={() => {
-                                          setCancelRequest(r);
-                                          setReviewNote("");
-                                        }}
+                                        className={`text-button${r.status === "pending" ? " danger-text" : ""}`}
+                                        disabled={busy}
+                                        onClick={() => openCancel(r)}
                                       >
-                                        {r.status === "approved" &&
+                                        {r.status === "pending" ? "取消申请" : r.status === "approved" &&
                                         r.startAt < clock
                                           ? "释放"
                                           : "取消"}
@@ -3085,6 +3086,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             {canReassign(review) && <button className="button" onClick={() => openAssignment(review)}>调整使用组与事项</button>}
             {canChangePriority(review) && <button className="button" onClick={() => openPriority(review)}>调整优先级</button>}
             {canExtend(review) && <button className="button" onClick={() => openExtension(review)}>延长使用</button>}
+            {canCancel(review) && <button className="button danger" disabled={busy} onClick={() => openCancel(review)}>{review.status === "pending" ? "取消申请" : review.startAt < clock ? "释放资源" : "取消申请"}</button>}
             {admin && review.status === "pending" && (
               <button
                 disabled={
@@ -3170,7 +3172,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               ? "提前释放资源"
               : "取消使用申请"
           }
-          sub="本次操作会影响该申请的全部剩余预约，使用历史将保留。"
+          sub={cancelRequest.status === "pending" ? "取消后不再等待管理员审批，申请记录将保留在“已取消”中。" : "本次操作会影响该申请的全部剩余预约，使用历史将保留。"}
           onClose={() => setCancelRequest(null)}
         >
           <div className="request-summary">
@@ -3180,13 +3182,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               {cancelRequest.resourceIds.length}台服务器
             </p>
           </div>
-          <Field label="取消 / 释放说明">
+          <Field label={cancelRequest.status === "pending" ? "取消说明（可选）" : "取消 / 释放说明"}>
             <textarea
               maxLength={1000}
               rows={3}
               value={reviewNote}
               onChange={(e) => setReviewNote(e.target.value)}
-              placeholder="例如任务提前完成，归还剩余时段。"
+              placeholder={cancelRequest.status === "pending" ? "例如计划变更，不再需要本次申请。" : "例如任务提前完成，归还剩余时段。"}
             />
           </Field>
           <div className="modal-footer">
@@ -3204,13 +3206,13 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       id: cancelRequest.id,
                       note: reviewNote,
                     },
-                    "申请已取消，剩余资源已释放",
+                    cancelRequest.status === "pending" ? "申请已取消，不再等待审批" : "申请已取消，剩余资源已释放",
                   )
                 )
                   setCancelRequest(null);
               }}
             >
-              确认处理
+              {cancelRequest.status === "pending" ? "确认取消申请" : "确认处理"}
             </button>
           </div>
         </Modal>
