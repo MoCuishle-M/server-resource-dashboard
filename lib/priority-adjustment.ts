@@ -17,18 +17,20 @@ export function priorityAdjustmentPreview(bookings: Booking[], resources: Resour
   });
   const changes = plan.map(p => {
     const booking = simulated.find(b => b.id === `${p.booking.id}:priority-preview`) ?? simulated.find(b => b.id === p.booking.id)!;
-    return { ...p, segments: bookingAvailability(booking, simulated, resources.find(r => r.id === booking.resourceId)?.sharingMode === "shared") };
+    const resource = resources.find(r => r.id === booking.resourceId);
+    return { ...p, segments: bookingAvailability(booking, simulated, resource?.sharingMode === "shared", resource?.timeBlocks) };
   });
   const impacts = bookings.filter(b => b.requestId !== request.id && resourceIds.includes(b.resourceId)
     && b.status === "scheduled" && b.endAt > now && resources.find(r => r.id === b.resourceId)?.sharingMode === "shared")
     .flatMap(booking => {
-      const before = bookingAvailability(booking, bookings), after = bookingAvailability(booking, simulated);
+      const blocks = resources.find(r => r.id === booking.resourceId)?.timeBlocks;
+      const before = bookingAvailability(booking, bookings, true, blocks), after = bookingAvailability(booking, simulated, true, blocks);
       const start = Math.max(Date.parse(booking.startAt), Date.parse(now));
       const boundaries = [...new Set([start, ...before.concat(after).flatMap(s => [Date.parse(s.startAt), Date.parse(s.endAt)])])]
         .filter(t => t >= start).sort((a, b) => a - b);
       return boundaries.slice(0, -1).flatMap((time, i) => {
-        const wasBlocked = before.some(s => Date.parse(s.startAt) <= time && Date.parse(s.endAt) > time && s.blockedBy.length > 0);
-        const isBlocked = after.some(s => Date.parse(s.startAt) <= time && Date.parse(s.endAt) > time && s.blockedBy.length > 0);
+        const wasBlocked = before.some(s => Date.parse(s.startAt) <= time && Date.parse(s.endAt) > time && (s.blockedBy.length > 0 || s.blockedByTimeBlocks.length > 0));
+        const isBlocked = after.some(s => Date.parse(s.startAt) <= time && Date.parse(s.endAt) > time && (s.blockedBy.length > 0 || s.blockedByTimeBlocks.length > 0));
         return wasBlocked === isBlocked ? [] : [{ booking, startAt: new Date(time).toISOString(),
           endAt: new Date(boundaries[i + 1]).toISOString(), wasBlocked, isBlocked }];
       });

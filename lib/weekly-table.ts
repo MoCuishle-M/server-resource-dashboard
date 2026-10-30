@@ -1,5 +1,6 @@
 import type { Resource, State, WeeklyAllocation, WeeklyDemand, WeeklyLine, WeeklyPlan, WeeklyServerRow } from "./types";
 import { calendarRange } from "./schedule";
+import { overlappingTimeBlocks, timeBlockTitle } from "./resource-time-blocks";
 
 export const SMOKE_NOTE = "每天北京时间 06:00–08:00 运行冒烟；如果失败，问题定位具有最高优先级。";
 export const CANADA_NOTE = "每天北京时间 23:00–次日09:00，加拿大研究所仅使用空闲卡；不占卡、不 kill 程序、不动已有进程与容器。";
@@ -58,6 +59,8 @@ export function checkTablePlan(s: State, p: WeeklyPlan, now = new Date().toISOSt
     if (!r || r.deleted || r.hidden || !(p.resourceIds ?? []).includes(row.resourceId)) { add("排期包含不在参与范围内或不可见的服务器"); continue; }
     if (!row.assignments.length) continue;
     if (r.status !== "available") add(`${r.ip} 当前故障、维护中或不可用`);
+    const blocks = overlappingTimeBlocks(r, { startAt: range.startAt < now ? now : range.startAt, endAt: range.endAt });
+    if (blocks.length) add(`${r.ip} 存在${blocks.map(timeBlockTitle).join("、")}，请先协调时段标记`);
     if (s.bookings.some(b => b.resourceId === r.id && b.status === "scheduled" && b.endAt > now && b.startAt < range.endAt && b.endAt > range.startAt
       && s.requests.find(q => q.id === b.requestId)?.weeklyPlanId !== p.id)) add(`${r.ip} 已有正式预约，请先协调或清空该服务器排期`);
     for (const a of row.assignments) {
@@ -112,6 +115,7 @@ export function recommendTableRows(s: State, p: WeeklyPlan): WeeklyServerRow[] {
     if (assigned.length >= target) continue;
     const peers = new Set((l.sameRackGroupIds ?? []).flatMap(g => rows.filter(row => row.assignments.some(a => a.groupId === g)).map(row => rackKey(s.resources.find(r => r.id === row.resourceId)))).filter(Boolean));
     let candidates = s.resources.filter(r => (p.resourceIds ?? []).includes(r.id) && matchesTableLine(r, l) && !assigned.includes(r.id)
+      && !overlappingTimeBlocks(r, range).length
       && !byId.get(r.id)?.assignments.some(a => a.groupId === d.groupId)
       && !s.bookings.some(b => b.resourceId === r.id && b.status === "scheduled" && b.startAt < range.endAt && b.endAt > range.startAt && s.requests.find(q => q.id === b.requestId)?.weeklyPlanId !== p.id)
       && (!peers.size || peers.has(rackKey(r))));

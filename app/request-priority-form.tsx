@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { priorityAdjustmentPreview } from "@/lib/priority-adjustment";
+import { timeBlockTitle } from "@/lib/resource-time-blocks";
 import { priorityLabel } from "@/lib/priority";
 import type { Booking, Group, Priority, Resource, UsageRequest } from "@/lib/types";
 
@@ -38,7 +39,7 @@ export default function RequestPriorityForm({ request, bookings, resources, grou
       <p>共享服务器同级共用，高优先使用；低优排期保留，仅被覆盖时段不可用。</p>
       {priority === request.priority && <p>请选择不同的优先级。</p>}
       {priority !== request.priority && !chosen.length && <p>请至少选择一台服务器。</p>}
-      {preview.changes.map(p => <div key={p.booking.id} className="priority-preview-resource"><strong>{resourceName(p.booking.resourceId)} · {priorityLabel[p.booking.priority]} → {priorityLabel[priority]}</strong>{p.segments.map(s => <p key={s.startAt} className={s.blockedBy.length ? "priority-blocked-text" : ""}>{time(s.startAt)} — {time(s.endAt)}：{s.blockedBy.length ? `已排期 · 暂不可用，高优任务：${s.blockedBy.map(groupName).join("、")}` : s.sharedWith.length ? `同级共享 · 可用：${s.sharedWith.map(groupName).join("、")}` : "可用"}</p>)}</div>)}
+      {preview.changes.map(p => <div key={p.booking.id} className="priority-preview-resource"><strong>{resourceName(p.booking.resourceId)} · {priorityLabel[p.booking.priority]} → {priorityLabel[priority]}</strong>{p.segments.map(s => <p key={s.startAt} className={s.blockedBy.length || s.blockedByTimeBlocks.length ? "priority-blocked-text" : ""}>{time(s.startAt)} — {time(s.endAt)}：{s.blockedByTimeBlocks.length ? `已排期 · 暂不可用：${s.blockedByTimeBlocks.map(timeBlockTitle).join("、")}` : s.blockedBy.length ? `已排期 · 暂不可用，高优任务：${s.blockedBy.map(groupName).join("、")}` : s.sharedWith.length ? `同级共享 · 可用：${s.sharedWith.map(groupName).join("、")}` : "可用"}</p>)}</div>)}
       {!!preview.changes.length && <div className="priority-preview-resource"><strong>对其他排期的影响</strong>{!preview.impacts.length && <p>其他任务的可用状态保持不变。</p>}{preview.impacts.map((p, i) => <p key={`${p.booking.id}:${i}`} className={p.isBlocked ? "priority-blocked-text" : ""}>{resourceName(p.booking.resourceId)} · {groupName(p.booking)} · {time(p.startAt)} — {time(p.endAt)}：{p.isBlocked ? "被抢占，排期保留 · 暂不可用" : "恢复可用"}</p>)}</div>}
     </section>
     {chosen.length > 0 && chosen.length < request.resourceIds.length && <p className="assignment-result">所选服务器将拆为独立工单，其余服务器沿用原优先级。</p>}

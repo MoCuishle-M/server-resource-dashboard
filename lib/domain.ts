@@ -17,6 +17,7 @@ import { applyWeeklyTableAction } from "./weekly-table-actions";
 import { bookingAvailability, displacesBooking, priorityLabel, priorityRank } from "./priority";
 import { priorityAdjustmentPlan } from "./priority-adjustment";
 import { currentGroupContacts } from "./group-contact";
+import { currentTimeBlock, overlappingTimeBlocks, timeBlockTitle } from "./resource-time-blocks";
 export { priorityLabel, priorityRank } from "./priority";
 export class DomainError extends Error {
   constructor(
@@ -65,6 +66,7 @@ export function overlaps(
 export function activeBookings(s: State, now: string) {
   return s.bookings.filter(
     (b) => b.status === "scheduled" && b.startAt <= now && b.endAt > now &&
+      !currentTimeBlock(s.resources.find(r => r.id === b.resourceId), now) &&
       (resourceSharingMode(s.resources.find(r => r.id === b.resourceId)) !== "shared" ||
         !s.bookings.some(other => other.resourceId === b.resourceId && other.status === "scheduled"
           && other.startAt <= now && other.endAt > now && priorityRank[other.priority] > priorityRank[b.priority])),
@@ -118,8 +120,9 @@ export function groupUsage(s: State, groupId: string, now: string) {
       continue;
     const ranges = byResource.get(b.resourceId) ?? [];
     for (const segment of bookingAvailability(b, s.bookings,
-      resourceSharingMode(s.resources.find(r => r.id === b.resourceId)) === "shared")) {
-      if (!segment.blockedBy.length && segment.startAt < now) ranges.push({
+      resourceSharingMode(s.resources.find(r => r.id === b.resourceId)) === "shared",
+      s.resources.find(r => r.id === b.resourceId)?.timeBlocks)) {
+      if (!segment.blockedBy.length && !segment.blockedByTimeBlocks.length && segment.startAt < now) ranges.push({
         start: Date.parse(segment.startAt), end: Math.min(Date.parse(segment.endAt), Date.parse(now)),
       });
     }
@@ -227,6 +230,10 @@ export function mutate(
     if (!admin && r.resourceIds.some(id => s.resources.some(resource => resource.id === id && resource.hidden)))
       fail("该申请需要由管理员处理", 403);
   }
+  function validateTimeBlocks(resource: Resource, range: { startAt: string; endAt: string }) {
+    const blocks = overlappingTimeBlocks(resource, range);
+    if (blocks.length) fail(`${resource.name} 在所选时段有${blocks.map(timeBlockTitle).join("、")}，请调整服务器或时间`, 409);
+  }
   function validateExtension(r: UsageRequest, endAt: string, resourceIds: string[]) {
     const startAt = r.endAt > now ? r.endAt : now;
     if (r.status !== "approved") fail("只能延长已批准的申请", 409);
@@ -238,6 +245,7 @@ export function mutate(
     for (const id of resourceIds) {
       const resource = s.resources.find(x => x.id === id && !x.deleted);
       if (!resource || resource.status !== "available") fail("部分服务器故障、维护中、不可用或已删除，无法续期", 409);
+      validateTimeBlocks(resource, { startAt, endAt });
       if (s.bookings.some(b => b.resourceId === id && b.requestId !== r.id
         && b.status === "scheduled" && overlaps(b, { startAt, endAt })
         && (resourceSharingMode(resource) === "exclusive" || priorityRank[b.priority] !== priorityRank[r.priority])))
@@ -292,6 +300,7 @@ export function mutate(
       sharingMode: sharingMode as Resource["sharingMode"],
       status: v.status as Resource["status"],
       ...(v.status === "fault" ? { faultDescription: text(v.faultDescription ?? previous?.faultDescription ?? "", "故障说明", 1000) } : {}),
+      ...(previous?.timeBlocks ? { timeBlocks: previous.timeBlocks } : {}),
       hidden: v.hidden === undefined ? previous?.hidden ?? false : v.hidden,
       location: text(v.location ?? "", "位置", 100, false),
       zone: text(v.zone ?? previous?.zone ?? "", "区域", 10, false) as Resource["zone"],
@@ -456,6 +465,57 @@ export function mutate(
       const before = { ...account };
       account.status = "rejected";
       audit("撤销管理员权限", "account", account.id, `撤销 ${account.displayName} 的管理员权限`, before, account);
+      break;
+    }
+    case "resource.timeBlock.save": {
+      needAdmin();
+      const resourceIds = ids(action.resourceIds, "服务器");
+      if (action.id && (typeof action.id !== "string" || resourceIds.length !== 1)) fail("编辑时段标记时请选择一台服务器");
+      if (!["emergency", "upgrade"].includes(action.kind as string)) fail("时段标记类型不正确");
+      const kind = action.kind as "emergency" | "upgrade";
+      const label = text(action.label ?? "", "自定义说明", 200, kind === "emergency");
+      const startValue = Date.parse(text(action.startAt, "开始时间", 64));
+      const endValue = Date.parse(text(action.endAt, "结束时间", 64));
+      if (!Number.isFinite(startValue) || !Number.isFinite(endValue)) fail("请填写有效的开始和结束时间");
+      const startAt = new Date(startValue).toISOString(), endAt = new Date(endValue).toISOString();
+      if (endAt <= startAt || endAt <= now) fail("结束时间必须晚于开始时间和当前时间");
+      if (endValue - startValue > 366 * 86400000) fail("单次标记最长366天");
+      const effectiveStart = startAt < now ? now : startAt;
+      const range = { startAt: effectiveStart, endAt };
+      const affected = s.bookings.filter(b => resourceIds.includes(b.resourceId) && b.status === "scheduled" && overlaps(b, range));
+      if (affected.length && action.confirmImpact !== true) fail(`将影响${affected.length}条已有预约，请确认暂停重叠时段的使用权`, 409);
+      for (const resourceId of resourceIds) {
+        const resource = s.resources.find(r => r.id === resourceId && !r.deleted);
+        if (!resource) fail("部分服务器不存在或已删除，请刷新", 404);
+        const existing = action.id ? resource.timeBlocks?.find(b => b.id === action.id && b.status === "active" && b.endAt > now) : undefined;
+        if (action.id && !existing) fail("时段标记已结束或已被修改，请刷新", 409);
+        if (overlappingTimeBlocks(resource, range).some(b => b.id !== existing?.id)) fail(`${resource.name} 已有重叠时段标记，请编辑原标记或调整时间`, 409);
+        if (existing && existing.startAt < now && startAt > now) fail("正在生效的标记只能从当前时刻调整；如需延后，请先解除再新增");
+        const before = existing ? { ...existing } : null;
+        resource.timeBlocks ??= [];
+        if (existing && existing.startAt < now) { existing.endAt = now; existing.updatedAt = now; }
+        const block = { id: existing && existing.startAt >= now ? existing.id : crypto.randomUUID(), kind, label,
+          ...range, status: "active" as const, createdAt: existing && existing.startAt >= now ? existing.createdAt : now, updatedAt: now };
+        if (existing && existing.startAt >= now) Object.assign(existing, block);
+        else resource.timeBlocks.push(block);
+        resource.updatedAt = now;
+        audit(before ? "修改服务器时段标记" : "新增服务器时段标记", "resource", resource.id,
+          `${resource.name}（${resource.ip}）：${timeBlockTitle(block)}，${range.startAt} — ${endAt}`, before, block);
+      }
+      break;
+    }
+    case "resource.timeBlock.cancel": {
+      needAdmin();
+      const resource = s.resources.find(r => r.id === action.resourceId && !r.deleted);
+      const block = resource?.timeBlocks?.find(b => b.id === action.id && b.status === "active" && b.endAt > now);
+      if (!resource || !block) fail("时段标记已结束或已解除，请刷新", 409);
+      const note = text(action.note, "解除原因", 1000);
+      const before = { ...block };
+      if (block.startAt < now) block.endAt = now;
+      else block.status = "cancelled";
+      block.updatedAt = now;
+      resource.updatedAt = now;
+      audit("解除服务器时段标记", "resource", resource.id, `${resource.name}：解除${timeBlockTitle(block)}；${note}`, before, block);
       break;
     }
     case "resource.fault": {
@@ -741,6 +801,7 @@ export function mutate(
       if (startAt < now) fail("开始时间不能早于当前时间");
       if (Date.parse(endAt) - Date.parse(startAt) > 366 * 86400000)
         fail("单次预约最长366天");
+      for (const id of resourceIds) validateTimeBlocks(s.resources.find(r => r.id === id)!, { startAt, endAt });
       if (!["normal", "high", "urgent"].includes(action.priority as string))
         fail("任务优先级不正确");
       const r: UsageRequest = {
@@ -785,6 +846,7 @@ export function mutate(
           const resource = s.resources.find((x) => x.id === id && !x.deleted);
           if (!resource || resource.status !== "available")
             fail("服务器已删除、维护中或不可用", 409);
+          validateTimeBlocks(resource, { startAt: effectiveStart, endAt: r.endAt });
         }
         const conflicts = approvalConflicts(s, r, effectiveStart);
         if (conflicts.length) {

@@ -46,7 +46,7 @@ export default function RequestResourcePicker({ resources, selected, used, onCha
         {visible.map(r => { const preview = range ? requestPriorityPreview(r, bookings, range, priority) : null; return <label key={r.id} className={selected.includes(r.id) ? "chosen" : ""}>
           <input type="checkbox" checked={selected.includes(r.id)} onChange={e => e.target.checked ? onChange([...new Set([...selected, r.id])]) : remove(r.id)} />
           <span><strong>{r.name}</strong><small className="mono">{r.ip}</small><small>{r.type} · {r.accessMode === "bare" ? "裸机" : "灵枢平台"} · {resourceSharingMode(r) === "shared" ? "共享" : "独占"}</small></span>
-          <span className={`badge ${preview ? preview.blocking.length || preview.affected.length ? "orange" : "green" : used.has(r.id) ? "orange" : "green"}`}>{preview?.label ?? (used.has(r.id) ? "使用中" : "空闲")}</span>
+          <span className={`badge ${preview ? preview.timeBlocks.length || preview.blocking.length || preview.affected.length ? "orange" : "green" : used.has(r.id) ? "orange" : "green"}`}>{preview?.label ?? (used.has(r.id) ? "使用中" : "空闲")}</span>
         </label>; })}
         {!visible.length && <p className="muted padded">{available.length ? "没有符合条件的服务器" : "暂无可申请服务器"}</p>}
       </div>

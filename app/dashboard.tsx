@@ -64,6 +64,9 @@ import {
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
+import ResourceTimeBlockForm, { ResourceTimeBlockList } from "./resource-time-block-form";
+import { currentTimeBlock, timeBlockTitle } from "@/lib/resource-time-blocks";
+import type { ResourceTimeBlock } from "@/lib/types";
 import ListPagination, { useListPagination } from "./list-pagination";
 import type { TimelineRange } from "@/lib/schedule";
 import { resourceSearch } from "@/lib/resource-search";
@@ -327,6 +330,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   }, [requestFailure, modal]);
   const [clock, setClock] = useState(new Date().toISOString());
   const [faultResource, setFaultResource] = useState<Resource | null>(null);
+  const [timeBlockEditor, setTimeBlockEditor] = useState<{ ids: string[]; block?: ResourceTimeBlock; range?: TimelineRange } | null>(null);
+  const [cancelTimeBlock, setCancelTimeBlock] = useState<{ resource: Resource; block: ResourceTimeBlock } | null>(null);
   const [faultText, setFaultText] = useState("");
   const [resourceStatus, setResourceStatus] = useState<Resource["status"]>("available");
   const [extendRequest, setExtendRequest] = useState<UsageRequest | null>(null);
@@ -345,6 +350,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     if (cancelRequest && !s.requests.some(r => r.id === cancelRequest.id)) setCancelRequest(null);
     setAssignmentRequest(null);
     setFaultResource(null);
+    setTimeBlockEditor(null); setCancelTimeBlock(null);
     if (extendRequest && (s.actor.role !== "contact" || extendRequest.groupId !== s.actor.groupId)) setExtendRequest(null);
     if (["resource", "bulk-edit", "import", "clear-schedules"].includes(modal ?? "")) setModal(null);
   }, [stored, detail, review, partialRequest, cancelRequest, modal]);
@@ -391,6 +397,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         setCancelRequest(null);
         setAssignmentRequest(null);
         setFaultResource(null);
+        setTimeBlockEditor(null); setCancelTimeBlock(null);
         setExtendRequest(null);
       }
     }
@@ -423,6 +430,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         next = d;
       }
       setS(next);
+      setClock(next.now);
       notify(message, "success", dialog);
       return true;
     } catch (e) {
@@ -452,7 +460,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     current = s ? activeBookings(s, clock) : [];
   const used = new Set(current.map((b) => b.resourceId));
   const available = resources.filter(
-    (r) => r.status === "available" && !used.has(r.id),
+    (r) => r.status === "available" && !used.has(r.id) && !currentTimeBlock(r, clock),
   );
   const pending = s?.requests.filter((r) => r.status === "pending" || r.pendingExtension) ?? [];
   const resourceName = (id: string) =>
@@ -493,6 +501,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   function openFault(r: Resource) {
     setToast(null); setDetail(null); setFaultResource(r); setFaultText(r.faultDescription ?? "");
   }
+  function openTimeBlock(ids: string[], block?: ResourceTimeBlock, range?: TimelineRange) {
+    setToast(null); setDetail(null); setTimeBlockEditor({ ids, block, range });
+  }
   function openPartialCancel(r: UsageRequest, resourceId?: string) {
     setReview(null);
     setDetail(null);
@@ -510,7 +521,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         (stateFilter === "used"
           ? used.has(r.id)
           : stateFilter === "free"
-            ? r.status === "available" && !used.has(r.id)
+            ? r.status === "available" && !used.has(r.id) && !currentTimeBlock(r, clock)
+            : stateFilter === "emergency" || stateFilter === "upgrade"
+              ? currentTimeBlock(r, clock)?.kind === stateFilter
             : stateFilter.startsWith("lingshu:")
               ? r.accessMode === "lingshu" && resourceLingshuStatus(r) === stateFilter.slice(8)
               : stateFilter === "hidden" ? !!r.hidden : r.status === stateFilter)) &&
@@ -687,6 +700,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           {rows.map((r) => {
             const usage = currentResourceUsage(s!, r.id, clock);
             const b = usage.bookings[0];
+            const block = currentTimeBlock(r, clock);
             return (
               <tr key={r.id}>
                 {admin && view === "resources" && (
@@ -743,7 +757,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 <td>
                   <Badge
                     tone={
-                      ["unavailable", "fault"].includes(r.status) ? "red" : r.status !== "available"
+                      block ? block.kind === "emergency" ? "red" : "blue" : ["unavailable", "fault"].includes(r.status) ? "red" : r.status !== "available"
                         ? "neutral"
                         : b
                           ? "orange"
@@ -751,16 +765,17 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     }
                   >
                     <i />
-                    {r.status !== "available"
+                    {block ? block.kind === "emergency" ? "紧急占用" : "正在升级" : r.status !== "available"
                       ? resourceStatusLabels[r.status]
                       : b
                         ? "使用中"
                         : "空闲"}
                   </Badge>
                   {r.status === "fault" && <small className="fault-description" title={r.faultDescription}>{r.faultDescription}</small>}
+                  {block && <small className="fault-description" title={timeBlockTitle(block)}>{timeBlockTitle(block)}</small>}
                 </td>
                 <td>
-                  {b ? (
+                  {block ? <span title={timeBlockTitle(block)}>{block.label || "正在升级"}</span> : b ? (
                     <>
                       <span
                         className="group-label"
@@ -796,7 +811,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   )}
                 </td>
                 <td>
-                  {b ? (
+                  {block ? <><span className="mono">{fmt(block.endAt)}</span><small>标记结束 · 北京时间</small></> : b ? (
                     <>
                       <span className="mono">{fmt(usage.releaseAt!)}</span>
                       <small>
@@ -819,6 +834,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     </button>
                     {admin ? (
                       <>
+                      <button className="text-button" aria-label={`时段标记 ${r.name}`} onClick={() => openTimeBlock([r.id])}>时段标记</button>
                       <button className="text-button danger-text" aria-label={`标记故障 ${r.name}`} onClick={() => openFault(r)}>{r.status === "fault" ? "更新故障" : "标记故障"}</button>
                       <button
                         className="icon-button"
@@ -1400,6 +1416,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <option value="maintenance">维护中</option>
                         <option value="unavailable">不可用</option>
                         <option value="fault">故障中</option>
+                        <option value="emergency">紧急占用</option><option value="upgrade">正在升级</option>
                         {admin && <option value="hidden">已隐藏（仅管理员可见）</option>}
                         {Object.entries(lingshuStatusLabels).map(([value, label]) => <option key={value} value={`lingshu:${value}`}>{label}</option>)}
                       </select>
@@ -1453,6 +1470,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <button className="text-button danger-text" onClick={() => setModal("clear-schedules")}>
                           <CalendarDays size={14} />清空未来排期
                         </button>
+                        <button className="text-button" onClick={() => openTimeBlock(selected)}>批量时段标记</button>
                         <button
                           className="text-button danger-text"
                           onClick={() => {
@@ -1485,6 +1503,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     now={clock}
                     onDetail={setDetail}
                     onRequest={openRequest}
+                    onTimeBlock={admin ? (r, range, block) => openTimeBlock([r.id], block, range) : undefined}
                     onPriority={admin ? b => {
                       const r = s.requests.find(r => r.id === b.requestId);
                       if (r && canChangePriority(r) && b.status === "scheduled" && b.endAt > clock) openPriority(r, b.resourceId);
@@ -2059,6 +2078,16 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           </footer>
         </main>
       </div>
+      {timeBlockEditor && admin && s && <Modal wide title={timeBlockEditor.block ? "编辑时段标记" : "新增时段标记"} onClose={() => setTimeBlockEditor(null)}>
+        <ResourceTimeBlockForm resources={resources.filter(r => timeBlockEditor.ids.includes(r.id))} bookings={s.bookings} groups={s.groups} now={clock} block={timeBlockEditor.block} initialRange={timeBlockEditor.range} busy={busy} onClose={() => setTimeBlockEditor(null)} onSave={a => run(a, "时段标记已保存，原预约保留")} />
+      </Modal>}
+      {cancelTimeBlock && admin && <Modal title="解除时段标记" onClose={() => setCancelTimeBlock(null)}>
+        <form onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); if (await run({ type: "resource.timeBlock.cancel", resourceId: cancelTimeBlock.resource.id, id: cancelTimeBlock.block.id, note: f.get("note") }, "时段标记已解除，原预约自动恢复")) setCancelTimeBlock(null); }}>
+          <p>{cancelTimeBlock.resource.name} · {timeBlockTitle(cancelTimeBlock.block)}</p><p className="notice">解除后原预约自动恢复使用权；已经发生的标记时段和历史保留。</p>
+          <Field label="解除原因 *"><textarea name="note" aria-label="解除标记原因" required maxLength={1000} rows={3} /></Field>
+          <div className="modal-footer"><button type="button" className="button" onClick={() => setCancelTimeBlock(null)}>取消</button><button className="button primary" disabled={busy}>确认解除标记</button></div>
+        </form>
+      </Modal>}
       {modal === "resource" && (
         <Modal
           title={editResource ? "编辑服务器" : "添加服务器"}
@@ -2992,9 +3021,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               <h3 className="detail-section-title">排期与使用权</h3>
               <div className="booking-list">
                 {displayBookings(s?.bookings ?? []).filter(b => b.requestId === review.id).sort((a, b) => a.startAt.localeCompare(b.startAt)).flatMap(b =>
-                  bookingAvailability(b, s?.bookings ?? [], resourceSharingMode(resources.find(r => r.id === b.resourceId)) === "shared").map(segment => {
-                    const blocked = b.status === "preempted" || segment.blockedBy.length > 0;
-                    return <div key={`${b.id}:${segment.startAt}`}><div><strong>{resourceName(b.resourceId)} · {priorityLabel[b.priority]}</strong><small>{fmt(segment.startAt)} → {fmt(segment.endAt)}</small>{!!segment.blockedBy.length && <small>高优任务：{segment.blockedBy.map(x => `${groupName(x.groupId)} · ${x.purpose}`).join("、")}</small>}</div><Badge tone={blocked ? "orange" : "green"}>{blocked ? "已排期 · 暂不可用" : segment.endAt <= clock || b.status === "released" ? "已结束" : segment.sharedWith.length ? "同级共享 · 可用" : "可用"}</Badge></div>;
+                  bookingAvailability(b, s?.bookings ?? [], resourceSharingMode(resources.find(r => r.id === b.resourceId)) === "shared", resources.find(r => r.id === b.resourceId)?.timeBlocks).map(segment => {
+                    const blocked = b.status === "preempted" || segment.blockedBy.length > 0 || segment.blockedByTimeBlocks.length > 0;
+                    return <div key={`${b.id}:${segment.startAt}`}><div><strong>{resourceName(b.resourceId)} · {priorityLabel[b.priority]}</strong><small>{fmt(segment.startAt)} → {fmt(segment.endAt)}</small>{!!segment.blockedByTimeBlocks.length && <small>时段标记：{segment.blockedByTimeBlocks.map(timeBlockTitle).join("、")}</small>}{!!segment.blockedBy.length && <small>高优任务：{segment.blockedBy.map(x => `${groupName(x.groupId)} · ${x.purpose}`).join("、")}</small>}</div><Badge tone={blocked ? "orange" : "green"}>{blocked ? "已排期 · 暂不可用" : segment.endAt <= clock || b.status === "released" ? "已结束" : segment.sharedWith.length ? "同级共享 · 可用" : "可用"}</Badge></div>;
                   }))}
                 {!requestBookings(review).some(b => ["scheduled", "released"].includes(b.status)) && <p className="muted">暂无有效排期</p>}
               </div>
@@ -3472,6 +3501,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
               复制 IP
             </button>
             <span className="spacer" />
+            {admin && !detail.deleted && <button className="button small" onClick={() => openTimeBlock([detail.id])}>新增时段标记</button>}
             {admin && <button className="button danger small" onClick={() => openFault(detail)}>{detail.status === "fault" ? "更新故障说明" : "标记故障"}</button>}
             {admin && detail.status === "fault" && <button className="button small" disabled={busy} onClick={async () => { if (await run({ type: "resource.recover", id: detail.id }, "服务器已恢复可申请，原预约保留")) setDetail(null); }}>恢复可申请</button>}
             {!detail.deleted && detail.status === "available" && (
@@ -3487,6 +3517,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
             )}
           </div>
           {detail.note && <p className="detail-note">{detail.note}</p>}
+          <ResourceTimeBlockList resource={s.resources.find(r => r.id === detail.id) ?? detail} now={clock}
+            onEdit={admin ? b => openTimeBlock([detail.id], b) : undefined}
+            onCancel={admin ? b => { setDetail(null); setCancelTimeBlock({ resource: detail, block: b }); } : undefined} />
           {detail.status === "fault" && <p className="notice danger fault-note" role="status"><AlertTriangle size={18} />故障说明：{detail.faultDescription}</p>}
           <h3 className="detail-section-title">当前与未来预约</h3>
           <div className="booking-list">
@@ -3498,9 +3531,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   b.endAt > clock,
               )
               .sort((a, b) => a.startAt.localeCompare(b.startAt))
-              .map((b) => { const segments = bookingAvailability(b, s.bookings, resourceSharingMode(detail) === "shared");
-                const blockedNow = b.status === "preempted" || segments.some(segment => segment.startAt <= clock && segment.endAt > clock && segment.blockedBy.length);
-                const blockedFuture = segments.some(segment => segment.endAt > clock && segment.blockedBy.length);
+              .map((b) => { const segments = bookingAvailability(b, s.bookings, resourceSharingMode(detail) === "shared", (s.resources.find(r => r.id === detail.id) ?? detail).timeBlocks);
+                const blockedNow = b.status === "preempted" || segments.some(segment => segment.startAt <= clock && segment.endAt > clock && (segment.blockedBy.length || segment.blockedByTimeBlocks.length));
+                const blockedFuture = segments.some(segment => segment.endAt > clock && (segment.blockedBy.length || segment.blockedByTimeBlocks.length));
                 return (
                 <div key={b.id}>
                   <Badge tone={blockedNow || blockedFuture ? "orange" : "blue"}>

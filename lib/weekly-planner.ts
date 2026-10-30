@@ -1,5 +1,6 @@
 import type { Resource, State, WeeklyAllocation, WeeklyDemand, WeeklyLine, WeeklyPlan } from "./types";
 import { calendarRange } from "./schedule";
+import { overlappingTimeBlocks, timeBlockTitle } from "./resource-time-blocks";
 
 export const weeklyCategoryLabels = { version: "版本需求", model: "模型开箱", ticket: "问题单", customer: "客户面问题" };
 export const weeklyStatusLabels = { collecting: "需求收集中", draft: "排期草稿", confirming: "待各组确认", published: "已发布" };
@@ -55,6 +56,8 @@ export function checkWeeklyPlan(s: State, p: WeeklyPlan): WeeklyIssue[] {
       if (a && (a.sharedResourceIds.length > l.shareCount || a.sharedResourceIds.some(id => !ids.includes(id)))) add("error", d, "共享服务器超出允许数量或未分配");
       for (const id of ids) {
         const r = s.resources.find(x => x.id === id);
+        const blocks = overlappingTimeBlocks(r, range);
+        if (blocks.length) add("error", d, `${r?.name ?? id}存在${blocks.map(timeBlockTitle).join("、")}，请先协调`);
         if (s.bookings.some(b => b.resourceId === id && b.status === "scheduled" && rangeOverlaps(b, range)
           && s.requests.find(q => q.id === b.requestId)?.weeklyPlanId !== p.id))
           add("error", d, `${r?.name ?? id}已有正式预约，请先协调；本周排期不会自动抢占`);
@@ -85,6 +88,7 @@ export function suggestWeeklyPlan(s: State, p: WeeklyPlan, historyOnly = false):
     const preferred = [...l.preferredResourceIds, ...(p.allocations.find(a => a.demandId === d.id && a.lineId === l.id)?.resourceIds ?? []), ...history];
     const range = demandRange(p, d);
     return s.resources.filter(r => matchesWeeklyLine(r, l) && (!historyOnly || preferred.includes(r.id))
+      && !overlappingTimeBlocks(r, range).length
       && !s.bookings.some(b => b.resourceId === r.id && b.status === "scheduled" && rangeOverlaps(b, range))
       // Automatic allocation is conservative: simultaneous sharing is explicit manual coordination.
       && !current.some(a => a.resourceIds.includes(r.id) && rangeOverlaps(demandRange(p, ds.find(x => x.id === a.demandId)!), range)))

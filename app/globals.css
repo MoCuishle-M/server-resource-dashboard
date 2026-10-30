@@ -2823,3 +2823,17 @@ th {
   .modal-footer { flex-wrap: wrap; }
   .form-grid { min-width: 0; }
 }
+/* Administrator-defined timed occupancy and upgrade windows. */
+.time-block-emergency { background: #fff0e6; color: #9a3412; border-color: #f97316; }
+.time-block-upgrade { background: #ede9fe; color: #5b21b6; border-color: #8b5cf6; }
+.timeline-time-block { border-style: dashed; border-width: 2px; }
+.priority-swatch.time-block-emergency { background: #f97316; }
+.priority-swatch.time-block-upgrade { background: #8b5cf6; }
+.time-block-item { display: flex; gap: 12px; align-items: center; justify-content: space-between; border: 1px solid; border-radius: 8px; padding: 12px; margin: 8px 0; }
+.time-block-item > div { min-width: 0; overflow-wrap: anywhere; }
+.time-block-item strong, .time-block-item small { display: block; }
+.time-block-item .row-actions { flex-wrap: wrap; flex-shrink: 0; }
+@media (max-width: 600px) {
+  .time-block-item { flex-direction: column; align-items: stretch; }
+  .time-block-form .form-grid { grid-template-columns: minmax(0, 1fr); }
+}

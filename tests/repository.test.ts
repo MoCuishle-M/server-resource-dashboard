@@ -23,6 +23,27 @@ const resource = {
   location: "",
   note: "",
 };
+test("D1 persists timed markers and releases with elapsed history intact", async () => {
+  const mf = new Miniflare({ modules: true, script: 'export default {fetch(){return new Response("ok")}}', compatibilityDate: "2026-05-15", d1Databases: ["DB"] });
+  try {
+    const db = (await mf.getD1Database("DB")) as unknown as D1Database;
+    const sql = (await Promise.all((await readdir("drizzle")).filter(name => name.endsWith(".sql")).sort().map(name => readFile(`drizzle/${name}`, "utf8")))).join("\n--> statement-breakpoint\n");
+    await db.batch(sql.split("--> statement-breakpoint").filter(x => x.trim()).map(x => db.prepare(x)));
+    const initial = await loadState(db);
+    let s = mutate(initial, admin, { type: "resource.save", resource }, now);
+    s = mutate(s, admin, { type: "resource.timeBlock.save", resourceIds: [s.resources[0].id], kind: "upgrade", label: "CANN升级", startAt: now, endAt: "2026-10-20T03:00:00.000Z" }, now);
+    await saveState(db, initial, s);
+    const loaded = await loadState(db);
+    assert.deepEqual(loaded.resources[0].timeBlocks, s.resources[0].timeBlocks);
+    const released = mutate(loaded, admin, { type: "resource.timeBlock.cancel", resourceId: loaded.resources[0].id, id: loaded.resources[0].timeBlocks![0].id, note: "升级完成" }, "2026-10-20T01:00:00.000Z");
+    await saveState(db, loaded, released);
+    const final = await loadState(db);
+    assert.equal(final.resources[0].timeBlocks![0].endAt, "2026-10-20T01:00:00.000Z");
+    assert.equal(final.audits.at(-1)!.action, "解除服务器时段标记");
+    await assert.rejects(saveState(db, loaded, released), /数据刚刚发生变化/);
+    assert.deepEqual(await loadState(db), final);
+  } finally { await mf.dispose(); }
+});
 test("D1 clears contact data on revoke and repairs legacy snapshots on read", async () => {
   const mf = new Miniflare({ modules: true, script: 'export default {fetch(){return new Response("ok")}}', compatibilityDate: "2026-05-15", d1Databases: ["DB"] });
   try {

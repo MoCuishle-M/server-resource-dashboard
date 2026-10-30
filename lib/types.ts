@@ -1,6 +1,16 @@
 export type Priority = "normal" | "high" | "urgent";
 export type SharingMode = "exclusive" | "shared";
 export type LingshuStatus = "platform" | "ticket" | "pool_platform";
+export type ResourceTimeBlock = {
+  id: string;
+  kind: "emergency" | "upgrade";
+  label: string;
+  startAt: string;
+  endAt: string;
+  status: "active" | "cancelled";
+  createdAt: string;
+  updatedAt: string;
+};
 export type Resource = {
   id: string;
   name: string;
@@ -16,6 +26,7 @@ export type Resource = {
   note: string;
   status: "available" | "maintenance" | "unavailable" | "fault";
   faultDescription?: string;
+  timeBlocks?: ResourceTimeBlock[];
   hidden?: boolean;
   deleted: boolean;
   createdAt: string;

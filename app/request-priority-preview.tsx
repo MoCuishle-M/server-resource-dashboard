@@ -1,5 +1,6 @@
 "use client";
 import { requestPriorityPreview, priorityLabel } from "@/lib/priority";
+import { timeBlockTitle } from "@/lib/resource-time-blocks";
 import type { Booking, Group, Priority, Resource } from "@/lib/types";
 
 const time = (iso: string) => new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(iso));
@@ -15,8 +16,9 @@ export default function RequestPriorityPreview({ resources, bookings, groups, st
       const preview = requestPriorityPreview(resource, bookings, { startAt, endAt }, priority);
       return <div className="priority-preview-resource" key={resource.id}>
         <strong>{resource.name} · {preview?.label ?? "请填写有效的起止时间"}</strong>
+        {!!preview?.timeBlocks.length && <p className="priority-blocked-text">该时段无法申请：{preview.timeBlocks.map(b => `${timeBlockTitle(b)}（${time(b.startAt)} — ${time(b.endAt)}）`).join("；")}</p>}
         {preview?.shared && preview.segments.map(segment => <p key={segment.startAt} className={segment.blockedBy.length ? "priority-blocked-text" : ""}>
-          {time(segment.startAt)} — {time(segment.endAt)}：{segment.blockedBy.length
+          {time(segment.startAt)} — {time(segment.endAt)}：{segment.blockedByTimeBlocks.length ? `暂不可用：${segment.blockedByTimeBlocks.map(timeBlockTitle).join("、")}` : segment.blockedBy.length
             ? `暂不可用，高优占用：${segment.blockedBy.map(name).join("、")}`
             : segment.sharedWith.length ? `同级共享：${segment.sharedWith.map(name).join("、")}` : "可用"}
         </p>)}

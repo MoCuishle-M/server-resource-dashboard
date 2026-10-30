@@ -7,8 +7,9 @@ import { resourceStatusLabels } from "@/lib/resource-policy";
 import { resourceSearch } from "@/lib/resource-search";
 import ResourceTypeFilter from "./resource-type-filter";
 import ListPagination, { useListPagination } from "./list-pagination";
-import { calendarRange, customRange, layoutBookings, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
-import type { Booking, Group, Resource, WeeklyPlan } from "@/lib/types";
+import { calendarRange, customRange, layoutBookings, layoutTimeBlocks, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
+import type { Booking, Group, Resource, ResourceTimeBlock, WeeklyPlan } from "@/lib/types";
+import { timeBlockTitle } from "@/lib/resource-time-blocks";
 import { scheduleNotes } from "@/lib/schedule-notes";
 import { bookingAvailability, priorityLabel } from "@/lib/priority";
 
@@ -26,7 +27,7 @@ type ResourceField = typeof resourceFields[number][0];
 const defaultFields: ResourceField[] = ["family", "zone", "ip"];
 const fieldStorageKey = "schedule-resource-fields-v1";
 
-export default function ScheduleTimeline({ resources, bookings, groups, weeklyPlans = [], now, onDetail, onRequest, onPriority }: {
+export default function ScheduleTimeline({ resources, bookings, groups, weeklyPlans = [], now, onDetail, onRequest, onPriority, onTimeBlock }: {
   resources: Resource[];
   bookings: Booking[];
   groups: Group[];
@@ -35,6 +36,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
   onDetail: (resource: Resource) => void;
   onRequest: (ids: string[], range: TimelineRange) => void;
   onPriority?: (booking: Booking) => void;
+  onTimeBlock?: (resource: Resource, range?: TimelineRange, block?: ResourceTimeBlock) => void;
 }) {
   const [mode, setMode] = useState<"week" | "day" | "range">("week");
   const [date, setDate] = useState(chinaDate());
@@ -69,7 +71,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
   const resourceTypes = [...new Set(resources.map(r => r.type))];
   const resourceRows = resources.filter(r => matchesSearch(r) && (types === null || types.includes(r.type))
     && (!family || (r.family || "unset") === family) && (!zone || (r.zone || "unset") === zone))
-    .map(resource => ({ resource, notes: scheduleNotes(weeklyPlans, resource.id, range), layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range) }))
+    .map(resource => ({ resource, notes: scheduleNotes(weeklyPlans, resource.id, range), blocks: layoutTimeBlocks(resource.timeBlocks ?? [], range), layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range) }))
     .filter(row => !group || row.layout.bars.length > 0);
   const pagination = useListPagination(resourceRows, "schedule-page-size-v1",
     JSON.stringify([search, types, group, family, zone, range.startAt, range.endAt]));
@@ -94,7 +96,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
     <div className="section-heading schedule-heading">
       <div>
         <h2>资源时间线</h2>
-        <p>同级任务在共享服务器上共用；高优抢占重叠时段，低优保留排期。斜纹表示已排期但暂不可用。{onPriority ? "管理员点击未结束的排期色条可调整优先级。" : "点击查看详情。"}</p>
+        <p>同级任务在共享服务器上共用；高优抢占重叠时段，低优保留排期。紧急占用与升级时段暂停预约使用权，结束后自动恢复。{onPriority ? "管理员点击未结束的排期色条可调整优先级。" : "点击查看详情。"}</p>
       </div>
       <div className="schedule-modes" aria-label="排期查看方式">
         {([ ["week", "一周"], ["day", "单日"], ["range", "自定义范围"] ] as const).map(([key, label]) =>
@@ -159,25 +161,30 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
             </span>)}
           </div>
         </th></tr></thead>
-        <tbody>{pagination.rows.map(({ resource: r, layout, notes }) => <tr key={r.id}>
+        <tbody>{pagination.rows.map(({ resource: r, layout, notes, blocks }) => <tr key={r.id}>
           <td className="schedule-server">
             <div className="schedule-resource-line"><button className="schedule-resource-info" aria-label={`查看服务器 ${r.ip} 详情`} onClick={() => onDetail(r)}>{fields.map(field => <span key={field} className={`schedule-field schedule-field-${field}`} title={`${resourceFields.find(([key]) => key === field)![1]}：${fieldValue(r, field)}`}>{fieldValue(r, field)}</span>)}</button>
             <button className="icon-button schedule-apply" aria-label="申请" title={r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请此服务器"} disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={14} /></button></div>
+            {onTimeBlock && range.endAt > now && <button className="text-button" aria-label={`标记时段 ${r.ip}`} onClick={() => onTimeBlock(r, { startAt: range.startAt < now ? now : range.startAt, endAt: range.endAt })}>标记时段</button>}
           </td>
-          <td className="timeline-cell"><div className="timeline-track" style={{ height: `calc(${layout.lanes} * var(--timeline-lane-height) + 12px)` }}>
+          <td className="timeline-cell"><div className="timeline-track" style={{ height: `calc(${layout.lanes + (blocks.bars.length ? blocks.lanes : 0)} * var(--timeline-lane-height) + 12px)` }}>
             {ticks.map(tick => <i key={tick.at} className="timeline-gridline" style={{ left: `${tick.percent}%` }} aria-hidden="true" />)}
             {currentPercent >= 0 && currentPercent < 100 && <i className="timeline-now" style={{ left: `${currentPercent}%` }} title="当前时间" aria-hidden="true" />}
-            {!layout.bars.length && <span className="timeline-empty">{r.status !== "available" ? resourceStatusLabels[r.status] : "暂无排期"}</span>}
+            {!layout.bars.length && !blocks.bars.length && <span className="timeline-empty">{r.status !== "available" ? resourceStatusLabels[r.status] : "暂无排期"}</span>}
+            {blocks.bars.map(({ booking: block, lane, left, width, continuesBefore, continuesAfter }) => {
+              const label = `${timeBlockTitle(block)} · ${fullTime(block.startAt)} — ${fullTime(block.endAt)} · 预约使用权暂停，原排期保留`;
+              return <button key={block.id} className={`booking-chip timeline-booking timeline-time-block time-block-${block.kind}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane} * var(--timeline-lane-height) + 6px)` }} aria-label={label} title={`${label}${onTimeBlock && block.endAt > now ? "\n点击编辑时段标记" : ""}`} onClick={() => onTimeBlock && block.endAt > now ? onTimeBlock(r, undefined, block) : onDetail(r)}><span className="timeline-summary">{continuesBefore ? "‹ " : ""}<strong>{timeBlockTitle(block)}</strong>{continuesAfter ? " ›" : ""}</span></button>;
+            })}
             {layout.bars.map(({ booking: b, lane, left, width, continuesBefore, continuesAfter }) => {
               const visibleStart = Math.max(Date.parse(b.startAt), Date.parse(range.startAt));
               const visibleEnd = Math.min(Date.parse(b.endAt), Date.parse(range.endAt));
-              const segments = bookingAvailability(b, bookings, resourceSharingMode(r) === "shared");
-              const blocked = segments.filter(s => (b.status === "preempted" || s.blockedBy.length) && Date.parse(s.startAt) < visibleEnd && Date.parse(s.endAt) > visibleStart);
+              const segments = bookingAvailability(b, bookings, resourceSharingMode(r) === "shared", r.timeBlocks);
+              const blocked = segments.filter(s => (b.status === "preempted" || s.blockedBy.length || s.blockedByTimeBlocks.length) && Date.parse(s.startAt) < visibleEnd && Date.parse(s.endAt) > visibleStart);
               const blockedDuration = blocked.reduce((sum, s) => sum + Math.min(visibleEnd, Date.parse(s.endAt)) - Math.max(visibleStart, Date.parse(s.startAt)), 0);
-              const status = blockedDuration >= visibleEnd - visibleStart ? "已排期 · 暂不可用" : blocked.length ? "部分时段被抢占" : segments.some(s => s.sharedWith.length) ? "同级共享 · 可用" : "可用";
-              const label = `${priorityLabel[b.priority]} · ${status} · ${groupName(b.groupId)} · ${b.purpose} · ${fullTime(b.startAt)} — ${fullTime(b.endAt)}${b.status === "released" ? " · 已提前释放" : ""}${blocked.map(s => `\n暂不可用：${fullTime(s.startAt)} — ${fullTime(s.endAt)}${s.blockedBy.length ? `，高优任务：${s.blockedBy.map(x => `${groupName(x.groupId)} · ${x.purpose}`).join("、")}` : "，已被高优任务抢占"}`).join("")}`;
+              const status = blockedDuration >= visibleEnd - visibleStart ? "已排期 · 暂不可用" : blocked.length ? "部分时段不可用" : segments.some(s => s.sharedWith.length) ? "同级共享 · 可用" : "可用";
+              const label = `${priorityLabel[b.priority]} · ${status} · ${groupName(b.groupId)} · ${b.purpose} · ${fullTime(b.startAt)} — ${fullTime(b.endAt)}${b.status === "released" ? " · 已提前释放" : ""}${blocked.map(s => `\n暂不可用：${fullTime(s.startAt)} — ${fullTime(s.endAt)}，${s.blockedByTimeBlocks.length ? s.blockedByTimeBlocks.map(timeBlockTitle).join("、") : s.blockedBy.length ? s.blockedBy.map(x => `${groupName(x.groupId)} · ${x.purpose}`).join("、") : "已被高优任务抢占"}`).join("")}`;
               const editable = !!onPriority && b.status === "scheduled" && b.endAt > now;
-              return <button key={b.id} className={`booking-chip timeline-booking priority-${b.priority} ${blocked.length ? "has-blocked-time" : ""}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane} * var(--timeline-lane-height) + 6px)` }} title={`${label}${editable ? "\n点击调整优先级" : ""}`} aria-label={label} onClick={() => editable ? onPriority!(b) : onDetail(r)} data-booking-id={b.id}>
+              return <button key={b.id} className={`booking-chip timeline-booking priority-${b.priority} ${blocked.length ? "has-blocked-time" : ""}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane + (blocks.bars.length ? blocks.lanes : 0)} * var(--timeline-lane-height) + 6px)` }} title={`${label}${editable ? "\n点击调整优先级" : ""}`} aria-label={label} onClick={() => editable ? onPriority!(b) : onDetail(r)} data-booking-id={b.id}>
                 {blocked.map(s => <i key={s.startAt} className="timeline-blocked-overlay" aria-hidden="true" style={{ left: `${(Math.max(visibleStart, Date.parse(s.startAt)) - visibleStart) / (visibleEnd - visibleStart) * 100}%`, width: `${(Math.min(visibleEnd, Date.parse(s.endAt)) - Math.max(visibleStart, Date.parse(s.startAt))) / (visibleEnd - visibleStart) * 100}%` }} />)}
                 <span className="timeline-summary">{continuesBefore ? "‹ " : ""}<strong>{groupName(b.groupId)}</strong><span> · {b.purpose}</span>{continuesAfter ? " ›" : ""}</span>
                 {(blocked.length > 0 || b.status === "released") && <small className="timeline-availability">{b.status === "released" ? "已提前释放" : status}</small>}
@@ -193,6 +200,6 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
       {!resourceRows.length && <div className="empty"><Server size={28} /><h3>{resources.length ? "没有符合条件的排期资源" : "添加资源后即可查看排期"}</h3></div>}
     </div>
     <ListPagination pagination={pagination} label="资源时间线" bottom />
-    <div className="schedule-legend priority-legend"><span><i className="priority-swatch normal" />普通</span><span><i className="priority-swatch high" />高优</span><span><i className="priority-swatch urgent" />紧急</span><span><i className="priority-swatch blocked" />斜纹：被抢占，排期保留</span><span>同级共用仅适用于共享服务器</span></div>
+    <div className="schedule-legend priority-legend"><span><i className="priority-swatch normal" />普通</span><span><i className="priority-swatch high" />高优</span><span><i className="priority-swatch urgent" />紧急</span><span><i className="priority-swatch blocked" />斜纹：暂不可用，排期保留</span><span><i className="priority-swatch time-block-emergency" />紧急占用标记</span><span><i className="priority-swatch time-block-upgrade" />正在升级</span><span>同级共用仅适用于共享服务器</span></div>
   </section>;
 }
