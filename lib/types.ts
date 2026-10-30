@@ -6,6 +6,8 @@ export type ResourceTimeBlock = {
   kind: "emergency" | "upgrade";
   label: string;
   startAt: string;
+  // A retrospective annotation can start earlier; usage suspension starts at startAt.
+  displayStartAt?: string;
   endAt: string;
   status: "active" | "cancelled";
   createdAt: string;

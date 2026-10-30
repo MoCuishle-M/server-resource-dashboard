@@ -495,12 +495,13 @@ export function mutate(
         resource.timeBlocks ??= [];
         if (existing && existing.startAt < now) { existing.endAt = now; existing.updatedAt = now; }
         const block = { id: existing && existing.startAt >= now ? existing.id : crypto.randomUUID(), kind, label,
+          ...(!existing && startAt < now ? { displayStartAt: startAt } : {}),
           ...range, status: "active" as const, createdAt: existing && existing.startAt >= now ? existing.createdAt : now, updatedAt: now };
         if (existing && existing.startAt >= now) Object.assign(existing, block);
         else resource.timeBlocks.push(block);
         resource.updatedAt = now;
         audit(before ? "修改服务器时段标记" : "新增服务器时段标记", "resource", resource.id,
-          `${resource.name}（${resource.ip}）：${timeBlockTitle(block)}，${range.startAt} — ${endAt}`, before, block);
+          `${resource.name}（${resource.ip}）：${timeBlockTitle(block)}，${block.displayStartAt ?? range.startAt} — ${endAt}${block.displayStartAt ? "；已过去的时段仅作标注，原使用统计保留" : ""}`, before, block);
       }
       break;
     }

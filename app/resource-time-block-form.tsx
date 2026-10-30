@@ -44,7 +44,8 @@ export default function ResourceTimeBlockForm({ resources, bookings, groups, now
     </div>
     {block && block.startAt < now && <p className="muted">正在生效的标记从保存时刻调整，之前的标记与使用历史保留。</p>}
     <section className="priority-preview" aria-label="时段标记影响预览" aria-live="polite"><strong>预览：{timeBlockTitle({ kind, label: label.trim() })}</strong>
-      {range && <p>{time(range.startAt < now ? now : range.startAt)} — {time(range.endAt)} · 北京时间</p>}
+      {range && <p>{time(block && range.startAt < now ? now : range.startAt)} — {time(range.endAt)} · 北京时间</p>}
+      {!block && range && range.startAt < now && <p>已过去的部分仅作时段标注，预约使用权从保存时刻暂停；已发生的使用统计保留。</p>}
       {conflicts.map(({ r, b }) => <p className="priority-blocked-text" key={`${r.id}:${b.id}`}>{r.ip} 已有重叠标记：{timeBlockTitle(b)}，请编辑原标记或调整时间。</p>)}
       <strong>影响 {affected.length} 条已有预约</strong>
       {affected.map(b => <p key={b.id}>{resources.find(r => r.id === b.resourceId)?.ip} · {groups.find(g => g.id === b.groupId)?.name ?? "历史团队"} · {b.purpose}<br />暂停：{time(b.startAt > effective!.startAt ? b.startAt : effective!.startAt)} — {time(b.endAt < effective!.endAt ? b.endAt : effective!.endAt)}</p>)}
@@ -63,7 +64,7 @@ export function ResourceTimeBlockList({ resource, now, onEdit, onCancel }: {
   return <section className="time-block-list" aria-label="服务器时段标记"><h3 className="detail-section-title">紧急占用与升级时段</h3>
     {!blocks.length && <p className="muted">暂无时段标记</p>}
     {blocks.map(b => <div className={`time-block-item time-block-${b.kind}`} key={b.id}>
-      <div><strong>{timeBlockTitle(b)}</strong><small>{time(b.startAt)} — {time(b.endAt)} · 北京时间</small><small>{b.status === "cancelled" ? "已取消" : b.endAt <= now ? "已结束" : b.startAt > now ? "待开始" : "正在生效"}</small></div>
+      <div><strong>{timeBlockTitle(b)}</strong><small>{time(b.displayStartAt ?? b.startAt)} — {time(b.endAt)} · 北京时间</small>{b.displayStartAt && <small>预约使用权从 {time(b.startAt)} 起暂停，之前仅作标注。</small>}<small>{b.status === "cancelled" ? "已取消" : b.endAt <= now ? "已结束" : b.startAt > now ? "待开始" : "正在生效"}</small></div>
       {b.status === "active" && b.endAt > now && <div className="row-actions">{onEdit && <button className="text-button" onClick={() => onEdit(b)}>编辑标记</button>}{onCancel && <button className="text-button danger-text" onClick={() => onCancel(b)}>解除标记</button>}</div>}
     </div>)}
   </section>;

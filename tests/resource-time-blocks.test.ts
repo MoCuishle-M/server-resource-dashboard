@@ -20,6 +20,22 @@ function setup(shared = false) {
 const mark = (s: State, extra = {}) => ({ type: "resource.timeBlock.save", resourceIds: [s.resources[0].id], kind: "emergency", label: "客户现场问题定位", startAt: at(3), endAt: at(5), confirmImpact: true, ...extra });
 const request = (s: State, startAt = at(3), endAt = at(4)) => ({ type: "request.create", resourceIds: [s.resources[0].id], groupId: "g2", startAt, endAt, purpose: "新任务", priority: "urgent" });
 
+test("whole-day annotations retain the requested display start without rewriting elapsed usage", () => {
+  const original = setup();
+  let s = act(original, mark(original, { startAt: now, endAt: at(9), label: "被上级抽调" }), admin, at(4));
+  const block = s.resources[0].timeBlocks![0];
+  assert.equal(block.displayStartAt, now);
+  assert.equal(block.startAt, at(4));
+  assert.equal(groupUsage(s, "g1", at(4)).hours, groupUsage(original, "g1", at(4)).hours);
+  assert.equal(activeBookings(s, at(2)).length, 2);
+  assert.equal(activeBookings(s, at(5)).length, 1);
+  assert.equal(layoutTimeBlocks([block], { startAt: now, endAt: at(12) }).bars[0].booking.startAt, now);
+  s = act(s, { type: "resource.timeBlock.cancel", resourceId: s.resources[0].id, id: block.id, note: "抽调结束" }, admin, at(6));
+  assert.equal(activeBookings(s, at(6)).length, 2);
+  assert.equal(s.resources[0].timeBlocks![0].displayStartAt, now);
+  assert.equal(groupUsage(s, "g1", at(7)).hours, 10);
+});
+
 test("timed blocks require admin, valid times, custom emergency label and impact acknowledgement", () => {
   const s = setup();
   for (const who of [contact, { ...contact, role: "member" as const }, { ...contact, role: "visitor" as const }]) assert.throws(() => act(s, mark(s), who), /仅服务器管理员/);

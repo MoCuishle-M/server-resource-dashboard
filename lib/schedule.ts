@@ -48,7 +48,7 @@ export function layoutBookings(bookings: Booking[], range: TimelineRange) {
 }
 
 export function layoutTimeBlocks(blocks: ResourceTimeBlock[], range: TimelineRange) {
-  return layoutRanges(blocks.filter(b => b.status === "active"), range);
+  return layoutRanges(blocks.filter(b => b.status === "active").map(b => ({ ...b, startAt: b.displayStartAt ?? b.startAt })), range);
 }
 
 function layoutRanges<T extends { id: string; startAt: string; endAt: string }>(items: T[], range: TimelineRange) {
