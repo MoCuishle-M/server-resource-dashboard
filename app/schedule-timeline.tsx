@@ -134,14 +134,8 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
       <select aria-label="排期区域筛选" value={zone} onChange={e => setZone(e.target.value)}>
         <option value="">全部区域</option><option value="blue">蓝区</option><option value="green">绿区</option><option value="unset">未登记区域</option>
       </select>
+      <ResourceTypeFilter types={resourceTypes} selected={types} onChange={setTypes} label="排期类型筛选" allLabel="全部硬件规格" />
       <div className="search"><Search size={16} /><textarea aria-label="搜索排期资源" aria-describedby="schedule-search-help" placeholder="输入 IP，支持多个 IP" rows={1} value={search} onChange={e => setSearch(e.target.value)} /></div>
-      <Popover.Root><Popover.Trigger asChild><button className={`button ${types !== null ? "is-filtered" : ""}`}><ListFilter size={14} />更多筛选{types !== null ? " · 已启用" : ""}</button></Popover.Trigger>
-        <Popover.Portal><Popover.Content className="schedule-options-popup" align="start" sideOffset={7} collisionPadding={12} aria-label="更多排期筛选">
-          <h3>更多筛选</h3>
-          <label>硬件规格<ResourceTypeFilter types={resourceTypes} selected={types} onChange={setTypes} label="排期类型筛选" /></label>
-          <button className="text-button" onClick={() => setTypes(null)}>重置更多筛选</button>
-        </Popover.Content></Popover.Portal>
-      </Popover.Root>
       <Popover.Root><Popover.Trigger asChild><button className="button"><SlidersHorizontal size={14} />显示信息</button></Popover.Trigger>
         <Popover.Portal><Popover.Content className="schedule-options-popup" align="end" sideOffset={7} collisionPadding={12} aria-label="排期显示信息">
           <h3>服务器显示信息</h3><p>至少保留一项，选择会在此浏览器中记住。</p>
