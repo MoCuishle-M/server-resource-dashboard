@@ -34,7 +34,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
   weeklyPlans?: WeeklyPlan[];
   now: string;
   onDetail: (resource: Resource) => void;
-  onRequest: (ids: string[], range: TimelineRange) => void;
+  onRequest?: (ids: string[], range: TimelineRange) => void;
   onPriority?: (booking: Booking) => void;
   onTimeBlock?: (resource: Resource, range?: TimelineRange, block?: ResourceTimeBlock) => void;
 }) {
@@ -122,6 +122,12 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
       <p className="schedule-range-label" data-start={range.startAt} data-end={range.endAt}>{fullTime(range.startAt)} — {fullTime(range.endAt)} · 北京时间（结束时刻不含在范围内）</p>
     </div>
     <div className="filters schedule-filters">
+      <label className={`schedule-group-filter ${group ? "is-filtered" : ""}`}>
+        <span><ListFilter size={16} />使用组</span>
+        <select aria-label="排期组筛选" value={group} onChange={e => setGroup(e.target.value)}>
+          <option value="">全部团队</option>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select>
+      </label>
       <select aria-label="排期型号筛选" value={family} onChange={e => setFamily(e.target.value)}>
         <option value="">全部类型</option><option value="A3">A3</option><option value="A5">A5</option><option value="unset">未登记类型</option>
       </select>
@@ -129,11 +135,11 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
         <option value="">全部区域</option><option value="blue">蓝区</option><option value="green">绿区</option><option value="unset">未登记区域</option>
       </select>
       <div className="search"><Search size={16} /><textarea aria-label="搜索排期资源" aria-describedby="schedule-search-help" placeholder="输入 IP，支持多个 IP" rows={1} value={search} onChange={e => setSearch(e.target.value)} /></div>
-      <Popover.Root><Popover.Trigger asChild><button className={`button ${(group || types !== null) ? "is-filtered" : ""}`}><ListFilter size={14} />更多筛选{(group || types !== null) ? " · 已启用" : ""}</button></Popover.Trigger>
+      <Popover.Root><Popover.Trigger asChild><button className={`button ${types !== null ? "is-filtered" : ""}`}><ListFilter size={14} />更多筛选{types !== null ? " · 已启用" : ""}</button></Popover.Trigger>
         <Popover.Portal><Popover.Content className="schedule-options-popup" align="start" sideOffset={7} collisionPadding={12} aria-label="更多排期筛选">
-          <h3>更多筛选</h3><label>使用组<select aria-label="排期组筛选" value={group} onChange={e => setGroup(e.target.value)}><option value="">全部团队</option>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}</select></label>
+          <h3>更多筛选</h3>
           <label>硬件规格<ResourceTypeFilter types={resourceTypes} selected={types} onChange={setTypes} label="排期类型筛选" /></label>
-          <button className="text-button" onClick={() => { setTypes(null); setGroup(""); }}>重置更多筛选</button>
+          <button className="text-button" onClick={() => setTypes(null)}>重置更多筛选</button>
         </Popover.Content></Popover.Portal>
       </Popover.Root>
       <Popover.Root><Popover.Trigger asChild><button className="button"><SlidersHorizontal size={14} />显示信息</button></Popover.Trigger>
@@ -164,7 +170,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
         <tbody>{pagination.rows.map(({ resource: r, layout, notes, blocks }) => <tr key={r.id}>
           <td className="schedule-server">
             <div className="schedule-resource-line"><button className="schedule-resource-info" aria-label={`查看服务器 ${r.ip} 详情`} onClick={() => onDetail(r)}>{fields.map(field => <span key={field} className={`schedule-field schedule-field-${field}`} title={`${resourceFields.find(([key]) => key === field)![1]}：${fieldValue(r, field)}`}>{fieldValue(r, field)}</span>)}</button>
-            <button className="icon-button schedule-apply" aria-label="申请" title={r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请此服务器"} disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={14} /></button></div>
+            {onRequest && <button className="icon-button schedule-apply" aria-label="申请" title={r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请此服务器"} disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={14} /></button>}</div>
             {onTimeBlock && range.endAt > now && <button className="text-button" aria-label={`标记时段 ${r.ip}`} onClick={() => onTimeBlock(r, { startAt: range.startAt < now ? now : range.startAt, endAt: range.endAt })}>标记时段</button>}
           </td>
           <td className="timeline-cell"><div className="timeline-track" style={{ height: `calc(${layout.lanes + (blocks.bars.length ? blocks.lanes : 0)} * var(--timeline-lane-height) + 12px)` }}>

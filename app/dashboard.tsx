@@ -54,7 +54,6 @@ import {
   chinaDate,
   emptyState,
   mutate,
-  overlaps,
   priorityLabel,
   priorityRank,
   slots,
@@ -267,7 +266,7 @@ function Modal({
 }
 export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const [stored, setS] = useState<PublicState | null>(null),
-    [view, setView] = useState<View>("overview"),
+    [selectedView, setView] = useState<View>("overview"),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -452,9 +451,14 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     employeeId: "",
   };
   const admin = actor.role === "admin";
+  const visitor = actor.role === "visitor";
+  const visibleNav = nav.filter(n => visitor
+    ? n.id === "overview" || n.id === "schedule"
+    : n.id !== "settings" || admin);
+  const view = visibleNav.some(n => n.id === selectedView) ? selectedView : "overview";
   useEffect(() => {
-    if (!loading && !admin && view === "settings") setView("overview");
-  }, [admin, loading, view]);
+    if (!loading && selectedView !== view) setView(view);
+  }, [loading, selectedView, view]);
   const canApply = admin || actor.role === "contact";
   const resources = s?.resources.filter((r) => !r.deleted) ?? [],
     current = s ? activeBookings(s, clock) : [];
@@ -563,7 +567,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     }
   }
   function navigate(v: View) {
-    setView(v);
+    setView(visibleNav.some(n => n.id === v) ? v : "overview");
     setSearch("");
     setGroupFilter("");
     setSelected([]);
@@ -912,7 +916,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           工作空间 <span>共享资源</span>
         </div>
         <nav>
-          {nav.filter(n => n.id !== "settings" || admin).map((n) => (
+          {visibleNav.map((n) => (
             <button
               key={n.id}
               aria-label={n.label}
@@ -1052,10 +1056,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 {chinaDate()}
                 <span>UTC+8</span>
               </span>
-              <button className="button primary" onClick={() => openRequest()}>
+              {canApply && <button className="button primary" onClick={() => openRequest()}>
                 <Plus size={17} />
                 申请资源
-              </button>
+              </button>}
             </div>
           </div>
           {error && (
@@ -1083,11 +1087,11 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           ) : (
             s && (
               <>
-                <section className="announcement-bar" aria-label="公告栏">
+                {view === "overview" && <section className="announcement-bar" aria-label="公告栏">
                   <Megaphone size={20} />
                   <div><h2>公告栏</h2><p>{s.settings.announcement || "暂无公告"}</p></div>
                   {admin && <button className="text-button" onClick={() => navigate("settings")}>编辑公告与签名</button>}
-                </section>
+                </section>}
                 {view === "settings" && admin && <AdminSettings state={s} busy={busy} onAction={run} />}
                 {view === "weekly" && <WeeklyPlanning state={s} busy={busy} onAction={run} />}
                 {view === "overview" && (
@@ -1161,7 +1165,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                           <small>项</small>
                         </strong>
                         <footer>
-                          <button
+                          {!visitor ? <button
                             onClick={() => {
                               navigate("requests");
                               setRequestFilter("pending");
@@ -1172,7 +1176,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                                 .length
                             }
                             项高优任务等待处理 <ArrowRight size={14} />
-                          </button>
+                          </button> : <span>{pending.filter(r => r.priority !== "normal").length}项高优任务等待处理</span>}
                         </footer>
                       </article>
                     </section>
@@ -1185,72 +1189,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <strong>{resources.filter(r => r.zone === zone && r.family === family).length}<small>台</small></strong>
                       </article>)}
                     </section>
-                    <section className="overview-split">
-                      <article className="panel slot-panel">
-                        <div className="section-heading">
-                          <div>
-                            <h2>
-                              今日时间窗口 <span>TODAY</span>
-                            </h2>
-                            <p>固定时段覆盖全天，跨夜窗口延续至次日。</p>
-                          </div>
-                          <button
-                            className="text-button"
-                            onClick={() => navigate("schedule")}
-                          >
-                            完整排期 <ArrowUpRight size={15} />
-                          </button>
-                        </div>
-                        <div className="slot-cards">
-                          {slots.map((slot, i) => {
-                            const range = timeRange(chinaDate(), i);
-                            const bookings = s.bookings.filter(
-                              (b) =>
-                                b.status === "scheduled" && overlaps(b, range),
-                            );
-                            const count = new Set(
-                              bookings.map((b) => b.resourceId),
-                            ).size;
-                            const active =
-                              range.startAt <= clock && range.endAt > clock;
-                            return (
-                              <button
-                                key={i}
-                                className={`slot-card ${active ? "current-slot" : ""}`}
-                                onClick={() => {
-                                  navigate("schedule");
-                                }}
-                              >
-                                <span>
-                                  {slot.label}
-                                  {active && <i>当前</i>}
-                                </span>
-                                <strong>
-                                  {slot.start}
-                                  <em>
-                                    — {slot.end}
-                                    {i === 4 ? " +1" : ""}
-                                  </em>
-                                </strong>
-                                <div className="slot-track">
-                                  <i
-                                    style={{
-                                      width: `${resources.length ? (count / resources.length) * 100 : 0}%`,
-                                    }}
-                                  />
-                                </div>
-                                <small>
-                                  <b>{count}</b> 台已排期
-                                </small>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <div className="subtle-foot">
-                          <Clock3 size={13} /> 支持自定义起止时间 ·
-                          相邻时段可连续使用
-                        </div>
-                      </article>
+                    <section className="overview-distribution">
                       <article className="panel distribution">
                         <div className="section-heading">
                           <div>
@@ -1286,9 +1225,9 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         </div>
                         <button
                           className="text-button"
-                          onClick={() => navigate("groups")}
+                          onClick={() => navigate(visitor ? "schedule" : "groups")}
                         >
-                          查看全部使用者 <ArrowRight size={14} />
+                          {visitor ? "查看团队使用排期" : "查看全部使用者"} <ArrowRight size={14} />
                         </button>
                       </article>
                     </section>
@@ -1313,12 +1252,12 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                               onChange={(e) => setSearch(e.target.value)}
                             />
                           </div>
-                          <button
+                          {!visitor && <button
                             className="text-button"
                             onClick={() => navigate("resources")}
                           >
                             全部资源 <ArrowUpRight size={15} />
-                          </button>
+                          </button>}
                         </div>
                       </div>
                       <ListPagination pagination={overviewPagination} label="资源实时状态" />
@@ -1502,7 +1441,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     weeklyPlans={s.weeklyPlans}
                     now={clock}
                     onDetail={setDetail}
-                    onRequest={openRequest}
+                    onRequest={canApply ? openRequest : undefined}
                     onTimeBlock={admin ? (r, range, block) => openTimeBlock([r.id], block, range) : undefined}
                     onPriority={admin ? b => {
                       const r = s.requests.find(r => r.id === b.requestId);

@@ -637,10 +637,8 @@ h1 {
   align-items: center;
   gap: 12px;
 }
-.overview-split {
-  display: grid;
-  grid-template-columns: minmax(0, 1.9fr) minmax(280px, 1fr);
-  gap: 21px;
+.overview-distribution {
+  min-width: 0;
   margin-bottom: 24px;
 }
 .slot-cards {
@@ -1292,6 +1290,11 @@ tbody tr:hover {
 .schedule-apply { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 24px; height: 26px; margin: 0; }
 .schedule-apply:disabled { color: #aab2bd; cursor: default; }
 .schedule-filters { gap: 8px; }
+.schedule-group-filter { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 10px; border: 1px solid #d7a17e; border-radius: 8px; background: #fff6ef; }
+.schedule-group-filter > span { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; color: #92522d; font-size: calc(11px * var(--font-scale, 1.3)); font-weight: 700; }
+.schedule-filters .schedule-group-filter select { min-width: 140px; max-width: 220px; border-color: #dfbda5; color: #70462e; background-color: #fff; }
+.schedule-group-filter.is-filtered { border-color: #b46c3f; box-shadow: 0 0 0 1px #b46c3f; }
+.schedule-group-filter:focus-within { outline: 2px solid #b46c3f; outline-offset: 2px; }
 .schedule-filters .search { flex: 1; min-width: 180px; max-width: 340px; }
 .schedule-filters .search textarea { min-height: 38px; height: 38px; resize: vertical; }
 .schedule-options-popup { z-index: 60; width: 290px; max-width: calc(100vw - 24px); padding: 16px; background: white; border: 1px solid #dce4ef; border-radius: 9px; box-shadow: 0 10px 40px #23374b26; font-size: calc(11px * var(--font-scale, 1.3)); }
@@ -2550,6 +2553,8 @@ th {
     padding: 8px;
     font-size: calc(10px * var(--font-scale, 1.3));
   }
+  .schedule-group-filter { flex-basis: 100%; }
+  .schedule-filters .schedule-group-filter select { min-width: 0; max-width: none; flex: 1; }
   .groups-grid {
     grid-template-columns: 1fr;
     gap: 13px;
