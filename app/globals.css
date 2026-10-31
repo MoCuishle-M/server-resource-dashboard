@@ -641,6 +641,29 @@ h1 {
   min-width: 0;
   margin-bottom: 24px;
 }
+.team-occupancy-panel { margin-bottom: 24px; }
+.team-occupancy-panel .section-heading, .team-directory-panel .section-heading { flex-wrap: wrap; gap: 12px; }
+.data-sheet-scroll { border-top: 1px solid #ccd9d1; border-radius: 0 0 12px 12px; }
+.data-sheet { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.data-sheet th, .data-sheet td { padding: 13px 18px; border: 1px solid #dfe7e2; line-height: 1.6; }
+.data-sheet thead th { background: #edf5ef; color: #3e6550; font-weight: 600; border-top: 0; }
+.data-sheet tr > :first-child { border-left: 0; }
+.data-sheet tr > :last-child { border-right: 0; }
+.data-sheet tbody tr:last-child > * { border-bottom: 0; }
+.data-sheet tbody th { background: #fff; color: #3d4e44; font-weight: 600; text-align: left; }
+.data-sheet tbody tr:nth-child(even) > :not(.sheet-row-number) { background: #fafcfb; }
+.data-sheet tbody tr:hover > :not(.sheet-row-number) { background: #f2f8f4; }
+.data-sheet .sheet-row-number { width: 58px; padding-inline: 12px; text-align: center; color: #7e8c84; background: #f4f7f5; font-weight: 400; }
+.data-sheet .sheet-quantity { text-align: right; min-width: 115px; }
+.data-sheet .has-quantity { color: #315e43; font-weight: 700; }
+.data-sheet .zero-quantity { color: #9ba69f; }
+.data-sheet thead .zone-blue { background: #edf3f8; color: #496783; }
+.data-sheet tbody th[scope="row"] { min-width: 170px; max-width: 280px; white-space: normal; overflow-wrap: anywhere; }
+.team-occupancy-table { min-width: 690px; }
+.team-directory-table { min-width: 960px; }
+.team-directory-table .row-actions { justify-content: flex-start; gap: 16px; }
+.team-directory-table .text-button { white-space: nowrap; }
+.contact-account-table { min-width: 960px; }
 .slot-cards {
   display: grid;
   grid-template-columns: repeat(5, 1fr);

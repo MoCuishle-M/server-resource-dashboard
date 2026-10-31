@@ -49,7 +49,6 @@ import {
   activeBookings,
   approvalConflicts,
   currentResourceUsage,
-  groupUsage,
   resourceSharingMode,
   chinaDate,
   emptyState,
@@ -121,6 +120,12 @@ const nav = [
   { id: "history", label: "变更历史", icon: History },
   { id: "settings", label: "网站设置", icon: Settings2 },
 ] as const;
+const resourceCategories = [
+  { zone: "green", family: "A5", label: "绿区 A5" },
+  { zone: "blue", family: "A5", label: "蓝区 A5" },
+  { zone: "green", family: "A3", label: "绿区 A3" },
+  { zone: "blue", family: "A3", label: "蓝区 A3" },
+] as const;
 const titles: Record<View, { title: string; sub: string }> = {
   overview: { title: "资源总览", sub: "让每一份算力，都有清晰的去向。" },
   resources: { title: "服务器资源", sub: "统一管理服务器清单与访问方式。" },
@@ -133,7 +138,7 @@ const titles: Record<View, { title: string; sub: string }> = {
     title: "申请与审批",
     sub: "从使用诉求到资源分配，每一步都有记录。",
   },
-  groups: { title: "团队与接口人", sub: "10个组与灵枢平台，共享透明的资源空间。" },
+  groups: { title: "团队与接口人", sub: "查看团队、接口人资料与申请记录，按团队提交资源申请。" },
   history: { title: "变更历史", sub: "每次分配、调整和释放，都有迹可循。" },
   settings: { title: "网站设置", sub: "维护公开信息与管理员权限。" },
 };
@@ -537,7 +542,6 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         )),
   );
   const resourcePageKey = JSON.stringify([search, typeFilter, modeFilter, stateFilter, groupFilter]);
-  const overviewPagination = useListPagination(filtered, "overview-page-size-v1", resourcePageKey, 10);
   const resourcePagination = useListPagination(filtered, "resources-page-size-v1", resourcePageKey);
   const historyTypeOptions = [...new Set((s?.audits ?? []).map(a => a.action))];
   const visibleAudits = filterAudits(s?.audits ?? [], { types: historyTypes, search, ...historyRange });
@@ -658,15 +662,14 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
       setResourceAccessMode("bare");
     }
   };
-  const groupStats =
-    s?.groups.map((g) => ({
-      group: g,
-      ...groupUsage(s, g.id, clock),
-      future: s.bookings.filter(
-        (b) =>
-          b.status === "scheduled" && b.groupId === g.id && b.startAt > clock,
-      ).length,
-    })) ?? [];
+  const groupStats = s?.groups.map(group => {
+    const resourceIds = new Set(current.filter(b => b.groupId === group.id).map(b => b.resourceId));
+    const inUse = resources.filter(r => resourceIds.has(r.id));
+    return {
+      group,
+      counts: resourceCategories.map(category => inUse.filter(r => r.zone === category.zone && r.family === category.family).length),
+    };
+  }) ?? [];
   const conflicts = review && s ? approvalConflicts(s, review, clock) : [];
   const showResourceTable = (rows: Resource[]) => (
     <div className="table-scroll">
@@ -1189,80 +1192,25 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <strong>{resources.filter(r => r.zone === zone && r.family === family).length}<small>台</small></strong>
                       </article>)}
                     </section>
-                    <section className="overview-distribution">
-                      <article className="panel distribution">
-                        <div className="section-heading">
-                          <div>
-                            <h2>团队当前占用</h2>
-                            <p>按正在使用的服务器计数</p>
-                          </div>
-                          <Users size={18} />
-                        </div>
-                        <div className="group-bars">
-                          {[...groupStats]
-                            .sort((a, b) => b.count - a.count)
-                            .slice(0, 4)
-                            .map((g, i) => (
-                              <div className="group-bar" key={g.group.id}>
-                                <span
-                                  className={`dot group-${Number(g.group.id.slice(1)) % 5}`}
-                                />
-                                <label>{g.group.name}</label>
-                                <div>
-                                  <i
-                                    className={`group-${Number(g.group.id.slice(1)) % 5}`}
-                                    style={{
-                                      width: `${g.count ? Math.max(5, (g.count / Math.max(1, used.size)) * 100) : 0}%`,
-                                    }}
-                                  />
-                                </div>
-                                <strong>
-                                  {g.count}
-                                  <small>台</small>
-                                </strong>
-                              </div>
-                            ))}
-                        </div>
-                        <button
-                          className="text-button"
-                          onClick={() => navigate(visitor ? "schedule" : "groups")}
-                        >
-                          {visitor ? "查看团队使用排期" : "查看全部使用者"} <ArrowRight size={14} />
-                        </button>
-                      </article>
-                    </section>
-                    <section className="panel">
+                    <section className="panel team-occupancy-panel">
                       <div className="section-heading">
                         <div>
-                          <h2>
-                            资源实时状态{" "}
-                            <span className="count-pill">
-                              {resources.length}
-                            </span>
-                          </h2>
-                          <p>服务器当前由谁使用，正在做什么。</p>
+                          <h2>团队当前占用</h2>
+                          <p>按当前有效排期统计，每个团队内同一服务器只计一次；共享服务器分别计入使用团队。单位：台。</p>
                         </div>
-                        <div className="section-tools">
-                          <div className="search compact">
-                            <Search size={16} />
-                            <input
-                              aria-label="搜索服务器"
-                              placeholder="搜索服务器或 IP"
-                              value={search}
-                              onChange={(e) => setSearch(e.target.value)}
-                            />
-                          </div>
-                          {!visitor && <button
-                            className="text-button"
-                            onClick={() => navigate("resources")}
-                          >
-                            全部资源 <ArrowUpRight size={15} />
-                          </button>}
-                        </div>
+                        <button className="text-button" onClick={() => navigate("schedule")}>查看使用排期 <ArrowRight size={14} /></button>
                       </div>
-                      <ListPagination pagination={overviewPagination} label="资源实时状态" />
-                      {showResourceTable(overviewPagination.rows)}
-                      <ListPagination pagination={overviewPagination} label="资源实时状态" bottom />
+                      <div className="table-scroll data-sheet-scroll" tabIndex={0} aria-label="团队当前占用表，可横向滚动">
+                        <table className="data-sheet team-occupancy-table" aria-label="团队当前占用">
+                          <thead><tr><th scope="col" className="sheet-row-number">序号</th><th scope="col">团队</th>{resourceCategories.map(category => <th scope="col" className={`sheet-quantity zone-${category.zone}`} key={category.label}>{category.label}</th>)}</tr></thead>
+                          <tbody>{groupStats.map(({ group, counts }, i) => <tr key={group.id}>
+                            <td className="sheet-row-number">{i + 1}</td>
+                            <th scope="row">{group.name}</th>
+                            {counts.map((count, index) => <td className={`sheet-quantity ${count ? "has-quantity" : "zero-quantity"}`} key={resourceCategories[index].label}>{count}</td>)}
+                          </tr>)}</tbody>
+                        </table>
+                        {!groupStats.length && <Empty title="暂无团队" />}
+                      </div>
                     </section>
                     <div className="bottom-note">
                       <span className="live-dot" />
@@ -1674,89 +1622,31 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 )}
                 {view === "groups" && (
                   <>
-                    <div className="group-intro">
-                      <span>
-                        <Users size={18} />
-                        10个组 + 灵枢平台
-                      </span>
-                      <span>
-                        <span className="live-dot" />
-                        {groupStats.filter((g) => g.count).length}
-                        个使用者正在使用资源
-                      </span>
-                      <p>
-                        累计使用按有效占用时间计算，未来预约与被抢占时段不计入。
-                      </p>
-                    </div>
-                    <div className="groups-grid">
-                      {groupStats.map((g, i) => (
-                        <article className="panel group-card" key={g.group.id}>
-                          <div className="group-card-heading">
-                            <span
-                              className={`group-avatar color-${(i + 1) % 5}`}
-                            >
-                              {String(i + 1).padStart(2, "0")}
-                            </span>
-                            <div>
-                              <h2>{g.group.name}</h2>
-                              <small>{g.group.id === PLATFORM_GROUP_ID ? "平台使用方" : "资源使用组"}</small>
-                            </div>
-                            {admin && (
-                              <button
-                                className="icon-button"
-                                aria-label={`编辑${g.group.name}`}
-                                onClick={() => {
-                                  setEditGroup(g.group);
-                                  setModal("group");
-                                }}
-                              >
-                                <Pencil size={16} />
-                              </button>
-                            )}
-                          </div>
-                          <div className="contact-row">
-                            <span>接口人</span>
-                            <strong>{g.group.contactName || "待配置"}</strong>
-                            <span className="mono">
-                              {g.group.employeeId || "工号待配置"}
-                            </span>
-                          </div>
-                          <div className="group-numbers">
-                            <div>
-                              <strong>
-                                {g.count}
-                                <small>台</small>
-                              </strong>
-                              <span>当前占用</span>
-                            </div>
-                            <div>
-                              <strong>
-                                {g.future}
-                                <small>段</small>
-                              </strong>
-                              <span>未来预约</span>
-                            </div>
-                            <div>
-                              <strong>
-                                {Number(g.hours.toFixed(1))}
-                                <small>时</small>
-                              </strong>
-                              <span>累计使用</span>
-                            </div>
-                          </div>
-                          <button
-                            className="group-card-footer"
-                            onClick={() => {
-                              navigate("requests");
-                              setGroupFilter(g.group.id);
-                              setRequestFilter("all");
-                            }}
-                          >
-                            查看本组申请 <ArrowUpRight size={14} />
-                          </button>
-                        </article>
-                      ))}
-                    </div>
+                    <section className="panel team-directory-panel">
+                      <div className="section-heading">
+                        <div><h2>团队与接口人名录 <span className="count-pill">{s.groups.length}</span></h2><p>查看接口人资料与申请记录；管理员可为各团队申请，接口人可为本组申请。</p></div>
+                      </div>
+                      <div className="table-scroll data-sheet-scroll" tabIndex={0} aria-label="团队与接口人名录，可横向滚动">
+                        <table className="data-sheet team-directory-table" aria-label="团队与接口人名录">
+                          <thead><tr><th scope="col" className="sheet-row-number">序号</th><th scope="col">团队</th><th scope="col">接口人</th><th scope="col">接口人工号</th><th scope="col">申请记录</th><th scope="col">操作</th></tr></thead>
+                          <tbody>{s.groups.map((group, i) => <tr key={group.id}>
+                            <td className="sheet-row-number">{i + 1}</td>
+                            <th scope="row">{group.name}</th>
+                            <td>{group.contactName || <span className="muted">待配置</span>}</td>
+                            <td className="mono">{group.employeeId || <span className="muted">待配置</span>}</td>
+                            <td><button className="text-button" aria-label={`查看${group.name}申请记录`} onClick={() => {
+                              navigate("requests"); setGroupFilter(group.id); setRequestFilter("all");
+                            }}>查看记录（{s.requests.filter(r => r.groupId === group.id).length}）<ArrowUpRight size={14} /></button></td>
+                            <td><div className="row-actions">
+                              {canApply && (admin || actor.groupId === group.id) && <button className="button small" aria-label={`为${group.name}申请资源`} onClick={() => { openRequest(); setRequestGroup(group.id); }}><Plus size={14} />申请资源</button>}
+                              {admin && <button className="text-button" aria-label={`编辑${group.name}`} onClick={() => { setEditGroup(group); setModal("group"); }}><Pencil size={14} />编辑资料</button>}
+                              {!admin && actor.groupId !== group.id && <span className="muted">由本组接口人申请</span>}
+                            </div></td>
+                          </tr>)}</tbody>
+                        </table>
+                        {!s.groups.length && <Empty title="暂无团队" />}
+                      </div>
+                    </section>
                     {admin && (
                       <section className="panel account-panel">
                         <div className="section-heading">
@@ -1778,8 +1668,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                             </p>
                           </div>
                         </div>
-                        <div className="table-scroll">
-                          <table>
+                        <div className="table-scroll data-sheet-scroll">
+                          <table className="data-sheet contact-account-table" aria-label="接口人身份审核">
                             <thead>
                               <tr>
                                 <th>姓名 / 工号</th>
@@ -3374,7 +3264,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
         const restore = modal.startsWith("account-restore:");
         const account = s.accounts.find((a) => a.id === modal.split(":")[1]);
         if (!account) return null;
-        return <Modal title={restore ? "重新授予接口人权限" : "更正接口人资料"} sub={restore ? "确认后，该账号可申请和取消所属组预约，组卡片将同步显示该接口人。" : "可更正姓名、工号和所属组。已认证账号的更正立即生效；待审核或已拒绝账号仍保留原认证状态。"} onClose={() => setModal(null)}>
+        return <Modal title={restore ? "重新授予接口人权限" : "更正接口人资料"} sub={restore ? "确认后，该账号可申请和取消所属组预约，团队名录将同步显示该接口人。" : "可更正姓名、工号和所属组。已认证账号的更正立即生效；待审核或已拒绝账号仍保留原认证状态。"} onClose={() => setModal(null)}>
           <p className="notice">登录邮箱：{account.email}</p>
           {restore ? <><p>{account.displayName} · {account.employeeId} · {groupName(account.groupId)}</p><div className="modal-footer"><button className="button" onClick={() => setModal(null)}>取消</button><button className="button primary" disabled={busy} onClick={async () => { if (await run({ type: "account.restore", id: account.id }, "接口人权限已重新授予")) setModal(null); }}>确认重新授权</button></div></> :
             <form key={account.id} onSubmit={async (e) => { e.preventDefault(); if (await run({ type: "account.update", id: account.id, ...Object.fromEntries(new FormData(e.currentTarget)) }, "接口人资料已更正")) setModal(null); }}>
