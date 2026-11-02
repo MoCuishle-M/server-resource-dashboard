@@ -1,5 +1,5 @@
 import type { Action, Actor, State, WeeklyDemand, WeeklyLine, WeeklyPlan, WeeklyServerRow } from "./types";
-import { calendarRange } from "./schedule";
+import { calendarRange, weeklyPlanRange } from "./schedule";
 import { checkTablePlan, clearFutureSchedules, inheritedTableRows, recommendTableRows, tableAllocations, tableDemands, tableGroups, tableRows } from "./weekly-table";
 
 type Helpers = { fail: (message: string, status?: number) => never; audit: (kind: string, entityType: string, entityId: string, summary: string, before?: unknown, after?: unknown) => void };
@@ -54,7 +54,7 @@ export function applyWeeklyTableAction(s: State, actor: Actor, a: Action, now: s
   }
   const p = s.weeklyPlans.find(p => p.id === a.planId); if (!p) fail("周计划不存在", 404);
   const plan = p!;
-  if (calendarRange(plan.weekStart, "week").endAt <= now) fail("该周已经结束");
+  if (weeklyPlanRange(plan).endAt <= now) fail("该周已经结束");
   const before = structuredClone(plan);
   if (a.type === "weekly.table.reopen") {
     needAdmin(); plan.rows = tableRows(s, plan).map(row => ({ ...structuredClone(row), assignments: plan.clearedResourceIds?.includes(row.resourceId) ? [] : row.assignments }));
@@ -69,6 +69,17 @@ export function applyWeeklyTableAction(s: State, actor: Actor, a: Action, now: s
   const touch = () => { plan.confirmations = []; plan.updatedAt = now; if (plan.status !== "collecting") plan.status = "draft"; plan.allocations = tableAllocations(s, plan); };
   let kind = "调整周计划";
   switch (a.type) {
+    case "weekly.table.time": {
+      needAdmin();
+      const value = str(a.endAt, "排期结束时间", 64), ms = Date.parse(value);
+      const base = calendarRange(plan.weekStart, "week");
+      if (!/(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(ms)) fail("请填写有效的排期结束时间（含时区）");
+      const endAt = new Date(ms).toISOString();
+      if (endAt <= now || endAt <= base.startAt || ms > Date.parse(base.endAt) + 86400000) fail("结束时间必须晚于当前时间，且不晚于下周二零点");
+      plan.endAt = endAt;
+      for (const d of tableDemands(s, plan)) { d.expectedEnd = endAt; d.deadline = endAt; d.updatedAt = now; }
+      touch(); kind = "调整周排期结束时间"; break;
+    }
     case "weekly.table.pool": {
       needAdmin(); const pool = validResourceIds(a.resourceIds), defaults = inheritedTableRows(s);
       plan.rows = pool.map(id => plan.rows?.find(r => r.resourceId === id) ?? { resourceId: id, assignments: [], specialNote: defaults.find(r => r.resourceId === id)?.specialNote ?? "" });
@@ -101,7 +112,7 @@ export function applyWeeklyTableAction(s: State, actor: Actor, a: Action, now: s
       const sameRackGroupIds = ids(l.sameRackGroupIds ?? []); if (sameRackGroupIds.some(id => id === groupId || !s.groups.some(g => g.id === id))) fail("同柜组别不正确");
       const line: WeeklyLine = { id: previousLine?.id ?? crypto.randomUUID(), zone: "green", family: "A3", accessMode: l.accessMode, resourceType, desired, minimum: 0, negotiated,
         mode: "multi", rackPolicy: "prefer", preferredResourceIds: previousLine?.preferredResourceIds ?? [], shareCount, sameRackCount, sameRackGroupIds, requirements: str(l.requirements ?? "", "要求", 2000, false) };
-      const range = calendarRange(plan.weekStart, "week"), purpose = str(v.title, "使用用途", 1000);
+      const range = weeklyPlanRange(plan), purpose = str(v.title, "使用用途", 1000);
       const d: WeeklyDemand = { id: old?.id ?? crypto.randomUUID(), planId: plan.id, groupId, title: purpose, category: "version", reason: purpose, deadline: range.endAt,
         expectedStart: range.startAt, expectedEnd: range.endAt, continuousHours: 0, timeNote: "", holdMode: "week", shareWithDemandIds: [], shareNote: "各组自行协调共用", lines: [line], status: "active",
         applicantName: str(v.applicantName ?? old?.applicantName ?? actor.displayName, "申请人", 100), applicantId: old?.applicantId ?? actor.userId, table: true, createdAt: old?.createdAt ?? now, updatedAt: now };
@@ -148,7 +159,7 @@ export function applyWeeklyTableAction(s: State, actor: Actor, a: Action, now: s
         if (b.startAt < now) { b.endAt = now; b.status = "released"; } else b.status = "cancelled"; b.updatedAt = now;
       }
       for (const q of s.requests) if (q.weeklyPlanId === plan.id) { delete q.pendingExtension; if (q.status === "approved" && !s.bookings.some(b => b.requestId === q.id && b.status === "scheduled" && b.endAt > now)) q.status = "cancelled"; }
-      const range = calendarRange(plan.weekStart, "week"), startAt = range.startAt > now ? range.startAt : now;
+      const range = weeklyPlanRange(plan), startAt = range.startAt > now ? range.startAt : now;
       for (const row of plan.rows ?? []) {
         if (row.assignments.length > 1) { const r = s.resources.find(r => r.id === row.resourceId)!; r.sharingMode = "shared"; r.updatedAt = now; }
         for (const x of row.assignments) {

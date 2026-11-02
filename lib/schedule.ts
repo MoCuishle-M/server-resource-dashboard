@@ -1,4 +1,4 @@
-import type { Booking, ResourceTimeBlock } from "./types";
+import type { Booking, ResourceTimeBlock, WeeklyPlan } from "./types";
 import { displayBookings } from "./priority";
 
 export type TimelineRange = { startAt: string; endAt: string };
@@ -28,6 +28,11 @@ export function customRange(start: string, end: string): TimelineRange {
     throw new Error("请填写完整的开始和结束日期时间");
   if (endMs <= startMs) throw new Error("结束时间必须晚于开始时间");
   return { startAt: new Date(startMs).toISOString(), endAt: new Date(endMs).toISOString() };
+}
+
+export function weeklyPlanRange(plan: Pick<WeeklyPlan, "weekStart" | "endAt">): TimelineRange {
+  const range = calendarRange(plan.weekStart, "week");
+  return { ...range, endAt: plan.endAt ?? range.endAt };
 }
 
 export function timelineTicks(range: TimelineRange) {

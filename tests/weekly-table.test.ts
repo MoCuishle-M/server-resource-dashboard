@@ -6,6 +6,7 @@ import type { Actor, State } from "../lib/types";
 import { readFile, readdir } from "node:fs/promises";
 import { Miniflare } from "miniflare";
 import { loadState, saveState } from "../lib/repository";
+import { scheduleNotes } from "../lib/schedule-notes";
 
 const now = "2026-10-26T04:00:00.000Z";
 const admin: Actor = { userId: "a", email: "a@test", displayName: "管理员", role: "admin", groupId: "g1", employeeId: "" };
@@ -21,6 +22,36 @@ const confirmAll = (s: State) => {
   for (const groupId of [...new Set(s.weeklyPlans[0].rows!.flatMap(r => r.assignments.map(a => a.groupId)))]) s = act(s, "confirm", { groupId, status: "confirmed", note: "会议已确认，管理员代录" });
   return s;
 };
+
+test("custom week end publishes through next Monday and retains notes and expiry checks", () => {
+  let s = setup(1);
+  const endAt = "2026-11-02T06:00:00.000Z", id = s.resources[0].id;
+  s = act(s, "rows", { rows: [{ resourceId: id, assignments: [{ groupId: "g1", purpose: "周排期" }], specialNote: CANADA_NOTE }] });
+  s = act(s, "stage", { status: "confirming" }); s = confirmAll(s);
+  s = act(s, "time", { endAt: "2026-11-02T14:00:00+08:00" });
+  assert.equal(s.weeklyPlans[0].endAt, endAt);
+  assert.equal(s.weeklyPlans[0].confirmations.length, 0);
+  s = act(s, "stage", { status: "confirming" }); s = confirmAll(s); s = act(s, "publish");
+  assert.equal(s.bookings[0].startAt, now); assert.equal(s.bookings[0].endAt, endAt);
+  assert.equal(s.requests[0].endAt, endAt);
+  const monday = { startAt: "2026-11-02T01:00:00.000Z", endAt: "2026-11-02T07:00:00.000Z" };
+  assert.equal(scheduleNotes(s.weeklyPlans, id, monday)[0].note, CANADA_NOTE);
+  const reopened = act(s, "reopen", {}, admin, monday.startAt);
+  assert.equal(reopened.weeklyPlans[0].status, "collecting");
+  assert.throws(() => act(s, "reopen", {}, admin, endAt), /已经结束/);
+});
+
+test("custom week end validates permissions, bounds and conflicts in the Monday extension", () => {
+  let s = setup(1), id = s.resources[0].id;
+  assert.throws(() => act(s, "time", { endAt: "2026-11-02T14:00:00+08:00" }, contact), /管理员/);
+  for (const endAt of ["invalid", "2026-11-02T14:00:00", now, "2026-11-03T00:01:00+08:00"])
+    assert.throws(() => act(s, "time", { endAt }), /结束时间/);
+  s = act(s, "time", { endAt: "2026-11-02T14:00:00+08:00" });
+  s = act(s, "rows", { rows: [{ resourceId: id, assignments: [{ groupId: "g1", purpose: "周排期" }], specialNote: "" }] });
+  s = mutate(s, admin, { type: "resource.timeBlock.save", resourceIds: [id], kind: "upgrade", label: "周一升级", startAt: "2026-11-02T01:00:00.000Z", endAt: "2026-11-02T02:00:00.000Z", reason: "测试", acknowledged: true }, now);
+  assert.ok(checkTablePlan(s, s.weeklyPlans[0], now).some(x => /升级|标记/.test(x.message)));
+  assert.throws(() => act(s, "stage", { status: "confirming" }), /升级|标记/);
+});
 
 test("table plans validate Mondays, inherit previous/default assignments and use an explicit server pool", () => {
   let s = setup();

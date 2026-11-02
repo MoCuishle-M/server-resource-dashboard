@@ -1,5 +1,6 @@
 import type { State, WeeklyPlan } from "./types";
 import { tableAllocations, tableDemands, tableRows } from "./weekly-table";
+import { weeklyPlanRange } from "./schedule";
 export async function exportWeeklyWorkbook(s: State, p: WeeklyPlan) {
   const ExcelJS = await import("exceljs"), workbook = new ExcelJS.default.Workbook();
   const name = (id: string) => s.groups.find(g => g.id === id)?.name ?? id;
@@ -9,6 +10,9 @@ export async function exportWeeklyWorkbook(s: State, p: WeeklyPlan) {
     const r = s.resources.find(r => r.id === row.resourceId && !r.hidden && !r.deleted); if (!r) continue;
     schedule.addRow([p.weekStart, r.zone === "green" ? "绿区" : r.zone === "blue" ? "蓝区" : "未登记", r.rack || "", r.type, r.accessMode === "bare" ? "裸机" : "灵枢", r.name, r.ip, row.assignments.map(a => name(a.groupId)).join(" / "), row.assignments.map(a => `${name(a.groupId)}：${a.purpose}`).join("\n"), row.specialNote, p.clearedResourceIds?.includes(r.id) ? "未来排期已清空" : p.status === "published" ? "已发布" : "预排期"]);
   }
+  schedule.getColumn(12).header = "排期结束时间（北京时间）";
+  schedule.getColumn(12).width = 28;
+  for (let row = 2; row <= schedule.rowCount; row++) schedule.getCell(row, 12).value = new Date(Date.parse(weeklyPlanRange(p).endAt) + 28800000).toISOString().slice(0, 16).replace("T", " ");
   demands.columns = ["周起始日期", "使用用途", "组名", "申请人", "服务器类型", "使用方式", "理想数量", "协商后数量", "支持共用数量", "同柜数量要求", "需要同柜的组", "其他要求", "已分配数量", "已分配IP"].map((header, i) => ({ header, width: [16, 40, 24, 18, 28, 12, 14, 16, 18, 18, 30, 56, 16, 48][i] }));
   const allocations = tableAllocations(s, p);
   for (const d of tableDemands(s, p)) for (const l of d.lines) {

@@ -1,5 +1,5 @@
 import type { Resource, State, WeeklyAllocation, WeeklyDemand, WeeklyLine, WeeklyPlan, WeeklyServerRow } from "./types";
-import { calendarRange } from "./schedule";
+import { weeklyPlanRange } from "./schedule";
 import { overlappingTimeBlocks, timeBlockTitle } from "./resource-time-blocks";
 
 export const SMOKE_NOTE = "每天北京时间 06:00–08:00 运行冒烟；如果失败，问题定位具有最高优先级。";
@@ -52,7 +52,7 @@ export function tableAllocations(s: State, p: WeeklyPlan): WeeklyAllocation[] {
 export type TableIssue = { severity: "error" | "warning"; message: string };
 export function checkTablePlan(s: State, p: WeeklyPlan, now = new Date().toISOString()): TableIssue[] {
   const issues: TableIssue[] = [], rows = tableRows(s, p), allocations = tableAllocations(s, p);
-  const range = calendarRange(p.weekStart, "week");
+  const range = weeklyPlanRange(p);
   const add = (message: string, severity: TableIssue["severity"] = "error") => issues.push({ severity, message });
   for (const row of rows) {
     const r = s.resources.find(r => r.id === row.resourceId);
@@ -106,7 +106,7 @@ export function inheritedTableRows(s: State, previous?: WeeklyPlan, now = new Da
 /** Scheduling baseline, explicitly separate from an AI model. */
 export function recommendTableRows(s: State, p: WeeklyPlan): WeeklyServerRow[] {
   const rows = structuredClone(tableRows(s, p));
-  const range = calendarRange(p.weekStart, "week");
+  const range = weeklyPlanRange(p);
   // Keep prior/default assignments; place only the unfilled part of each demand.
   const byId = new Map(rows.map(r => [r.resourceId, r]));
   for (const d of tableDemands(s, p)) for (const l of d.lines) {
@@ -164,7 +164,7 @@ export function clearFutureSchedules(s: State, resourceIds: string[], now: strin
     }
   }
   for (const p of s.weeklyPlans) {
-    if (calendarRange(p.weekStart, "week").endAt <= now) continue;
+    if (weeklyPlanRange(p).endAt <= now) continue;
     const affected = resourceIds.filter(id => tableRows(s, p).some(r => r.resourceId === id && r.assignments.length));
     if (!affected.length) continue;
     if (p.status === "published") { p.clearedResourceIds = [...new Set([...(p.clearedResourceIds ?? []), ...affected])]; p.updatedAt = now; continue; }

@@ -178,6 +178,7 @@ export type WeeklyAllocation = {
   note: string;
 };
 export type WeeklyPlan = {
+  endAt?: string;
   layout?: "table";
   resourceIds?: string[];
   rows?: WeeklyServerRow[];
