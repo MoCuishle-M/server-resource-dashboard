@@ -210,7 +210,7 @@ export function applyWeeklyAction(s: State, actor: Actor, a: Action, now: string
     { plan, demands: s.weeklyDemands.filter(d => detailIds.includes(d.id)) });
 }
 
-/** Drafts are private to admins and the submitting group; public viewers only see published plans. */
+/** Table drafts are shared by admins and approved contacts; public viewers only see published plans. */
 export function visibleWeeklyState(s: State, actor: Actor): Pick<State, "weeklyPlans" | "weeklyDemands"> {
   if (actor.role === "admin") return { weeklyPlans: s.weeklyPlans, weeklyDemands: s.weeklyDemands };
   const contact = actor.role === "contact";
@@ -227,7 +227,7 @@ export function visibleWeeklyState(s: State, actor: Actor): Pick<State, "weeklyP
       resourceIds: p.resourceIds?.filter(id => !hidden.has(id)),
       clearedResourceIds: p.clearedResourceIds?.filter(id => !hidden.has(id)),
       aiNote: "",
-      rows: p.rows?.filter(row => !hidden.has(row.resourceId)).map(row => ({ ...row, assignments: row.assignments.filter(a => p.status === "published" || (contact && a.groupId === actor.groupId)) })),
+      rows: p.rows?.filter(row => !hidden.has(row.resourceId)).map(row => ({ ...row, assignments: row.assignments.filter(a => p.status === "published" || (contact && (p.layout === "table" || a.groupId === actor.groupId))) })),
       directory: contact ? ds.filter(d => d.planId === p.id && d.status === "active").map(d => ({ id: d.id, title: d.title, groupId: d.groupId })) : [],
       allocations: p.allocations.filter(a => visible.some(d => d.id === a.demandId)).map(a => own(a.demandId) ? a : { ...a, note: "" }),
       deferred: p.deferred.filter(a => visible.some(d => d.id === a.demandId)).map(a => own(a.demandId) ? a : { ...a, reason: "本周暂缓" }),

@@ -23,6 +23,46 @@ const confirmAll = (s: State) => {
   return s;
 };
 
+test("online sheet is shared by contacts, rejects unapproved roles and preserves untouched and hidden rows", () => {
+  let s = setup(3);
+  s = act(s, "rows", { rows: s.weeklyPlans[0].rows!.map(r => ({ ...r, assignments: [{ groupId: "g2", purpose: "共享预排期" }] })) });
+  const before = structuredClone(s.weeklyPlans[0].rows![0]), after = { ...before, specialNote: "接口人在线更新" };
+  for (const role of ["visitor", "member"] as const) {
+    const actor = { ...contact, role, userId: role === "visitor" ? "" : "pending" };
+    assert.equal(serializePublic(s, actor, now, true).weeklyPlans.length, 0);
+    assert.throws(() => act(s, "sheet", { changes: [{ before, after }] }, actor), /认证/);
+  }
+  assert.equal(serializePublic(s, contact, now, true).weeklyPlans[0].rows![0].assignments[0].purpose, "共享预排期");
+  s.resources[2].hidden = true;
+  const untouched = structuredClone(s.weeklyPlans[0].rows!.slice(1));
+  s = act(s, "sheet", { changes: [{ before, after }] }, contact);
+  assert.equal(s.weeklyPlans[0].rows![0].specialNote, after.specialNote);
+  assert.deepEqual(s.weeklyPlans[0].rows!.slice(1), untouched);
+  assert.equal(s.bookings.length, 0);
+  assert.equal(s.audits.at(-1)!.action, "在线编辑服务器预排期");
+  const hidden = s.weeklyPlans[0].rows![2];
+  assert.throws(() => act(s, "sheet", { changes: [{ before: hidden, after: { ...hidden, specialNote: "越权" } }] }, contact), /隐藏/);
+  assert.throws(() => act(s, "publish", {}, contact), /管理员/);
+});
+
+test("online sheet rejects stale rows atomically, merges edits to other rows, and invalidates confirmations", () => {
+  let s = setup(2);
+  s = act(s, "rows", { rows: s.weeklyPlans[0].rows!.map(r => ({ ...r, assignments: [{ groupId: "g1", purpose: "初始" }] })) });
+  s = confirmAll(act(s, "stage", { status: "confirming" }));
+  const [first, second] = structuredClone(s.weeklyPlans[0].rows!);
+  const changes = [{ before: first, after: { ...first, specialNote: "管理员修改" } }];
+  s = act(s, "sheet", { changes });
+  assert.equal(s.weeklyPlans[0].confirmations.length, 0); assert.equal(s.weeklyPlans[0].status, "draft");
+  assert.throws(() => act(s, "sheet", { changes: [{ before: second, after: { ...second, specialNote: "不可部分保存" } }, ...changes] }, contact), /其他人修改/);
+  assert.equal(s.weeklyPlans[0].rows![1].specialNote, "");
+  s = act(s, "sheet", { changes: [{ before: second, after: { ...second, specialNote: "不同行可合并" } }] }, contact);
+  assert.equal(s.weeklyPlans[0].rows![0].specialNote, "管理员修改");
+  assert.equal(s.weeklyPlans[0].rows![1].specialNote, "不同行可合并");
+  s = act(s, "stage", { status: "confirming" }); s = confirmAll(s); s = act(s, "publish");
+  const row = s.weeklyPlans[0].rows![0];
+  assert.throws(() => act(s, "sheet", { changes: [{ before: row, after: { ...row, specialNote: "修改已发布" } }] }, contact), /已发布/);
+});
+
 test("custom week end publishes through next Monday and retains notes and expiry checks", () => {
   let s = setup(1);
   const endAt = "2026-11-02T06:00:00.000Z", id = s.resources[0].id;
@@ -143,7 +183,7 @@ test("draft data stays private, constant allocations count for confirmation, hid
   s = act(s, "rows", { rows: s.weeklyPlans[0].rows!.map((r, i) => ({ ...r, assignments: [{ groupId: i < 2 ? "g1" : "g2", purpose: i < 2 ? "本组安排" : "另组私有安排" }] })) });
   const visitor: Actor = { ...contact, userId: "", role: "visitor" };
   assert.equal(serializePublic(s, visitor, now, true).weeklyPlans.length, 0);
-  const own = serializePublic(s, contact, now, true); assert.ok(!JSON.stringify(own.weeklyPlans).includes("另组私有安排"));
+  const own = serializePublic(s, contact, now, true); assert.ok(JSON.stringify(own.weeklyPlans).includes("另组私有安排"));
   s = act(s, "defaults", { resourceIds: s.resources.map(r => r.id), rows: s.weeklyPlans[0].rows });
   assert.equal(serializePublic(s, contact, now, true).settings.weeklyDefaults, undefined);
   s.resources[0].hidden = true;

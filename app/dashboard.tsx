@@ -277,6 +277,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [busy, setBusy] = useState(false),
     [toast, setToast] = useState<OperationNotice | null>(null);
   const s = stored && demo ? { ...serializePublic(stored, stored.actor, stored.now, stored.adminConfigured), demo: true } : stored;
+  const [weeklyDirty, setWeeklyDirty] = useState(false);
   const [search, setSearch] = useState(""),
     [typeFilter, setTypeFilter] = useState<string[] | null>(null),
     [modeFilter, setModeFilter] = useState(""),
@@ -459,7 +460,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const visitor = actor.role === "visitor";
   const visibleNav = nav.filter(n => visitor
     ? n.id === "overview" || n.id === "schedule"
-    : n.id !== "settings" || admin);
+    : (n.id !== "settings" || admin) && (n.id !== "weekly" || admin || actor.role === "contact"));
   const view = visibleNav.some(n => n.id === selectedView) ? selectedView : "overview";
   useEffect(() => {
     if (!loading && selectedView !== view) setView(view);
@@ -571,6 +572,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     }
   }
   function navigate(v: View) {
+    if (v !== view && weeklyDirty && !window.confirm("离开排期页面将放弃尚未保存的表格修改，是否继续？")) return;
     setView(visibleNav.some(n => n.id === v) ? v : "overview");
     setSearch("");
     setGroupFilter("");
@@ -1096,7 +1098,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   {admin && <button className="text-button" onClick={() => navigate("settings")}>编辑公告与签名</button>}
                 </section>}
                 {view === "settings" && admin && <AdminSettings state={s} busy={busy} onAction={run} />}
-                {view === "weekly" && <WeeklyPlanning state={s} busy={busy} onAction={run} />}
+                {view === "weekly" && <WeeklyPlanning state={s} busy={busy} onAction={run} onDirty={setWeeklyDirty} />}
                 {view === "overview" && (
                   <>
                     <section className="kpi-grid">

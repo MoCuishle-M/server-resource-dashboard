@@ -69,6 +69,19 @@ export function applyWeeklyTableAction(s: State, actor: Actor, a: Action, now: s
   const touch = () => { plan.confirmations = []; plan.updatedAt = now; if (plan.status !== "collecting") plan.status = "draft"; plan.allocations = tableAllocations(s, plan); };
   let kind = "调整周计划";
   switch (a.type) {
+    case "weekly.table.sheet": {
+      if (!Array.isArray(a.changes) || !a.changes.length || a.changes.length > 200) fail("请提交有效的表格修改");
+      const changes = a.changes as { before: WeeklyServerRow; after: WeeklyServerRow }[];
+      const resourceIds = validResourceIds(changes.map(c => c?.after?.resourceId));
+      for (const change of changes) {
+        const current = plan.rows?.find(r => r.resourceId === change.after.resourceId);
+        if (!current || JSON.stringify(current) !== JSON.stringify(change.before)) fail("你编辑的行已被其他人修改，请载入最新表格后重试；本次修改未写入", 409);
+      }
+      const updated = checkedRows(changes.map(c => c.after), plan.resourceIds ?? []);
+      for (const row of updated) for (const x of row.assignments) if (x.demandId && !tableDemands(s, plan).some(d => d.id === x.demandId && d.groupId === x.groupId && d.lines.some(l => l.id === x.lineId))) fail("需求关联无效");
+      plan.rows = (plan.rows ?? []).map(row => resourceIds.includes(row.resourceId) ? updated.find(r => r.resourceId === row.resourceId)! : row);
+      touch(); kind = "在线编辑服务器预排期"; break;
+    }
     case "weekly.table.time": {
       needAdmin();
       const value = str(a.endAt, "排期结束时间", 64), ms = Date.parse(value);

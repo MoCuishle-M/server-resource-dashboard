@@ -2865,3 +2865,18 @@ th {
   .time-block-item { flex-direction: column; align-items: stretch; }
   .time-block-form .form-grid { grid-template-columns: minmax(0, 1fr); }
 }
+/* Shared pre-scheduling sheet. */
+.weekly-online-scroll { max-height: 68vh; }
+.weekly-online-sheet .weekly-grid { min-width: 1150px; }
+.weekly-online-sheet th { position: sticky; top: 0; z-index: 1; }
+.weekly-online-sheet td { vertical-align: top; border-right: 1px solid var(--line); }
+.weekly-online-sheet textarea { width: 100%; min-width: 195px; border: 1px solid transparent; border-radius: 3px; background: #f8fafc; padding: 8px; resize: vertical; }
+.weekly-online-sheet textarea:focus { outline: 2px solid #527d66; background: white; }
+.weekly-sheet-purpose { display: block; margin-bottom: 6px; }
+.weekly-sheet-purpose > span { display: block; color: #69798b; font-size: .85em; margin-bottom: 3px; }
+.weekly-sheet-groups { min-width: 185px; }
+.weekly-sheet-groups summary { cursor: pointer; padding: 8px; border: 1px solid var(--line); border-radius: 4px; }
+.weekly-sheet-groups > div { display: grid; gap: 7px; padding-top: 10px; }
+.weekly-sheet-hint { padding: 0 22px 14px; color: #69798b; font-size: .9em; }
+.weekly-sheet-status { margin-right: auto; color: #527d66; }
+.weekly-sheet-changed td { background: #fffbee; }
