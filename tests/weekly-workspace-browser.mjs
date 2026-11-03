@@ -12,6 +12,10 @@ try {
   page.on("dialog", d => d.accept());
   await page.goto(base + "/demo", { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "每周需求与排期", exact: true }).click();
+  await page.getByRole("heading", { name: "A5 双流程周计划", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "创建周计划", exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "常态分配", exact: true }).count(), 0);
+  assert.equal(await page.getByLabel("选择周计划", { exact: true }).count(), 0);
   await page.getByRole("button", { name: "创建 A5 双流程周计划", exact: true }).click();
   let dialog = page.getByRole("dialog"); await dialog.getByLabel("周起始日期（北京时间周一）").fill("2030-01-14");
   await dialog.getByRole("button", { name: "创建并收集需求", exact: true }).click(); await dialog.waitFor({ state: "hidden" });

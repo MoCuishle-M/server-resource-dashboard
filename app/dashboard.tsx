@@ -129,7 +129,7 @@ const resourceCategories = [
 const titles: Record<View, { title: string; sub: string }> = {
   overview: { title: "资源总览", sub: "让每一份算力，都有清晰的去向。" },
   resources: { title: "服务器资源", sub: "统一管理服务器清单与访问方式。" },
-  weekly: { title: "每周需求与排期", sub: "集中收集需求，协调资源分配，确认后统一发布。" },
+  weekly: { title: "每周需求与排期", sub: "A5 双流程周计划 · 白天周分配与多机时段分配。" },
   schedule: {
     title: "使用排期",
     sub: "按时间查看资源分配，协调每个团队的计划。",

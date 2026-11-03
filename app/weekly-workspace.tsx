@@ -5,7 +5,6 @@ import { blueA5, chinaStamp, demandAssigned, resourceUnavailable, sectionGroups,
 import { calendarRange, shiftDate } from "@/lib/schedule";
 import { weeklyStatusLabels } from "@/lib/weekly-planner";
 import { CANADA_NOTE, SMOKE_NOTE } from "@/lib/weekly-table";
-import LegacyTable from "./weekly-table-planning";
 import { FeedbackContext, OperationFeedback } from "./operation-feedback";
 
 type Run = (action: Action, message?: string) => Promise<boolean>;
@@ -21,22 +20,23 @@ const dayName = (part: WeeklySectionName) => part === "day" ? "白天周分配" 
 
 export default function WeeklyWorkspaceHub(props: Props) {
   const { state: s, busy, onAction: run, onDirty } = props;
-  const plans = [...s.weeklyPlans].sort((a, b) => b.weekStart.localeCompare(a.weekStart));
+  const plans = s.weeklyPlans.filter(p => p.v2).sort((a, b) => b.weekStart.localeCompare(a.weekStart));
   const [selected, setSelected] = useState(""), [creating, setCreating] = useState(false), [dirty, setDirty] = useState(false), [error, setError] = useState("");
-  const plan = plans.find(p => p.id === selected) ?? plans[0];
+  const plan = plans.find(p => p.id === selected || p.weekStart === selected) ?? plans[0];
   useEffect(() => { onDirty(dirty || creating); return () => onDirty(false); }, [dirty, creating, onDirty]);
-  const oldState = { ...s, weeklyPlans: s.weeklyPlans.filter(p => !p.v2) };
-  const monday = new Date(Date.parse(calendarRange(s.now.slice(0, 10), "week").startAt) + 28800000).toISOString().slice(0, 10);
+  const monday = chinaStamp(calendarRange(chinaStamp(s.now).slice(0, 10), "week").startAt).slice(0, 10);
+  let nextWeek = monday;
+  while (s.weeklyPlans.some(p => p.weekStart === nextWeek)) nextWeek = shiftDate(nextWeek, 7);
   return <div className="weekly-workspace">
-    <section className="panel workspace-hub"><div><h2>每周需求与排期</h2><p>白天与多机分别协商、确认和发布 · 北京时间</p></div><div className="weekly-actions">
-      {!!plans.length && <label className="field"><span>选择排期周</span><select aria-label="选择排期周" value={plan?.id} onChange={e => { if (dirty && !window.confirm("切换将放弃未保存输入，是否继续？")) return; setDirty(false); setSelected(e.target.value); }}>{plans.map(p => <option value={p.id} key={p.id}>{p.weekStart} · {p.v2 ? "蓝区A5双流程" : "原有周表"}</option>)}</select></label>}
+    <section className="panel workspace-hub"><div><h2>A5 双流程周计划</h2><p>白天与多机分别协商、确认和发布 · 北京时间</p></div><div className="weekly-actions">
+      {!!plans.length && <label className="field"><span>选择排期周</span><select aria-label="选择排期周" value={plan?.id} onChange={e => { if (dirty && !window.confirm("切换将放弃未保存输入，是否继续？")) return; setDirty(false); setSelected(e.target.value); }}>{plans.map(p => <option value={p.id} key={p.id}>{p.weekStart} 周</option>)}</select></label>}
       {s.actor.role === "admin" && <button className="button primary" disabled={busy || dirty} onClick={() => setCreating(true)}>创建 A5 双流程周计划</button>}
     </div></section>
     {error && <p className="notice" role="alert">{error}</p>}
-    {plan?.v2 ? <Planner key={`${plan.id}/${s.actor.role}/${s.actor.groupId}`} {...props} plan={plan} onDirty={setDirty} /> : <LegacyTable key={plan?.id ?? "empty"} {...props} state={oldState} initialPlanId={plan?.id} onDirty={setDirty} />}
-    {creating && <Modal title="创建蓝区 A5 双流程周计划" close={() => setCreating(false)}><form onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); const weekStart = String(f.get("week")); if (await run({ type: "weekly.v2.create", weekStart }, "双流程周计划已创建")) { setSelected(""); setCreating(false); setError(""); } else setError("未能创建，请检查蓝区 A5 资源池以及该周是否已有计划。"); }}>
-      <Field label="周起始日期（北京时间周一）"><input type="date" name="week" required defaultValue={plans.some(p => p.weekStart === monday) ? shiftDate(monday, 7) : monday} /></Field>
-      <p className="notice">周一09:00至下周一09:00。共用同一个蓝区 A5 裸机资源池，继承以往白天归属。旧周表保持原有安排，新版从尚未创建的一周开始。</p>
+    {plan ? <Planner key={`${plan.id}/${s.actor.role}/${s.actor.groupId}`} {...props} plan={plan} onDirty={setDirty} /> : <section className="panel weekly-checks"><h3>暂无 A5 双流程周计划</h3><p className="muted">{s.actor.role === "admin" ? "点击上方“创建 A5 双流程周计划”，开始收集白天和多机使用需求。" : "管理员创建周计划后，可在这里填写白天和多机使用需求。"}</p></section>}
+    {creating && <Modal title="创建蓝区 A5 双流程周计划" close={() => setCreating(false)}><form onSubmit={async e => { e.preventDefault(); const f = new FormData(e.currentTarget); const weekStart = String(f.get("week")); if (await run({ type: "weekly.v2.create", weekStart }, "双流程周计划已创建")) { setSelected(weekStart); setCreating(false); setError(""); } else setError("未能创建，请检查蓝区 A5 资源池以及该周是否已有计划。"); }}>
+      <Field label="周起始日期（北京时间周一）"><input type="date" name="week" required defaultValue={nextWeek} /></Field>
+      <p className="notice">周一09:00至下周一09:00。白天与多机共用蓝区 A5 裸机资源池，默认继承以往白天归属。</p>
       <div className="modal-footer"><button className="button" type="button" onClick={() => setCreating(false)}>取消</button><button className="button primary" disabled={busy}>创建并收集需求</button></div>
     </form></Modal>}
   </div>;
