@@ -99,6 +99,17 @@ function Planner({ state: s, plan: p, busy, onAction: run, onDirty, section, onS
 }
 
 function blankDemand(s: PublicState): WorkspaceDemand { return { id: "", groupId: s.actor.groupId || s.groups[0]?.id, title: "", desired: 1, slotIds: [], continuous: false, sameRackCount: 0, shareCount: 0, model: "", requirements: "", applicantName: s.actor.displayName }; }
+const modelPresets = ["deepseek", "qwen", "glm", "kimi"];
+function ModelTagsField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const tags = value.split(/[、,，;；\n]+/).map(x => x.trim()).filter(Boolean);
+  const [selected, setSelected] = useState(() => modelPresets.filter(x => tags.some(tag => tag.toLowerCase() === x)));
+  const [custom, setCustom] = useState(() => tags.filter(x => !modelPresets.includes(x.toLowerCase())).join("、"));
+  const combined = (presets: string[], other: string) => {
+    const seen = new Set<string>();
+    return [...presets, ...other.split(/[、,，;；\n]+/)].map(x => x.trim()).filter(x => { const key = x.toLowerCase(); if (!x || seen.has(key)) return false; seen.add(key); return true; }).join("、");
+  };
+  return <fieldset className="model-tags-field"><legend>模型标记（可多选）</legend><div className="model-tag-options">{modelPresets.map(tag => <label key={tag} className={selected.includes(tag) ? "selected" : ""}><input type="checkbox" checked={selected.includes(tag)} disabled={!selected.includes(tag) && combined([...selected, tag], custom).length > 100} onChange={e => { const next = e.target.checked ? [...selected, tag] : selected.filter(x => x !== tag), other = custom.split(/[、,，;；\n]+/).filter(x => x.trim().toLowerCase() !== tag).join("、"); setSelected(next); setCustom(other); onChange(combined(next, other)); }} />{tag}</label>)}</div><input aria-label="其他模型标记" value={custom} maxLength={Math.max(0, 100 - selected.join("、").length - (selected.length ? 1 : 0))} placeholder="其他模型，多个名称用逗号分隔" onChange={e => { setCustom(e.target.value); onChange(combined(selected, e.target.value)); }} /></fieldset>;
+}
 function DemandForm({ s, p, part, initial, busy, save }: { s: PublicState; p: WeeklyPlan; part: WeeklySectionName; initial?: WorkspaceDemand; busy: boolean; save: (d: WorkspaceDemand) => Promise<void> }) {
   const [d, setD] = useState(() => structuredClone(initial ?? blankDemand(s))), sec = p.v2!.sections[part];
   const update = (change: Partial<WorkspaceDemand>) => setD({ ...d, ...change });
@@ -109,7 +120,7 @@ function DemandForm({ s, p, part, initial, busy, save }: { s: PublicState; p: We
     <Field label="所需总台数（含常态机）"><input type="number" required min={1} max={200} value={d.desired} onChange={e => update({ desired: Number(e.target.value) })} /></Field>
     <Field label="至少多少台同柜"><input type="number" min={0} max={d.desired} value={d.sameRackCount} onChange={e => update({ sameRackCount: Number(e.target.value) })} /></Field>
     {part === "day" && <Field label="其中可共用台数"><input type="number" min={0} max={d.desired} value={d.shareCount} onChange={e => update({ shareCount: Number(e.target.value) })} /></Field>}
-    <Field label="模型标记"><input list="workspace-models" maxLength={100} value={d.model} onChange={e => update({ model: e.target.value })} /><datalist id="workspace-models">{["deepseek", "qwen", "glm", "kimi"].map(x => <option key={x}>{x}</option>)}</datalist></Field>
+    <ModelTagsField value={d.model} onChange={model => update({ model })} />
     <Field label="其他要求"><textarea value={d.requirements} maxLength={2000} onChange={e => update({ requirements: e.target.value })} /></Field>
   </div>{part === "multi" && <><label className="checkbox-label"><input type="checkbox" checked={d.continuous} onChange={e => update({ continuous: e.target.checked })} />必须同一批服务器连续使用（请选择相邻时段）</label><div className="workspace-slot-picker">{p.v2!.slots.map(x => { const c = workspaceCapacity(s, p, x, preview); return <label key={x.id} className="checkbox-label"><input type="checkbox" disabled={!x.enabled} checked={d.slotIds.includes(x.id)} onChange={e => update({ slotIds: e.target.checked ? [...d.slotIds, x.id] : d.slotIds.filter(id => id !== x.id) })} /><span>{x.label}<small>{x.enabled ? `填报后申请${c.requested} / 容量${c.available} · 超额${c.requestExcess}` : "未开放 · 仍按白天分配"}</small></span></label>; })}</div></>}
     <div className="modal-footer"><button className="button primary" disabled={busy || (part === "multi" && !d.slotIds.length)}>保存需求</button></div>

@@ -25,8 +25,21 @@ try {
   for (const [group, title] of [["g1", "一组白天开发"], ["g2", "二组白天开发"]]) {
     await page.getByRole("button", { name: "填写白天需求", exact: true }).click(); dialog = page.getByRole("dialog");
     await dialog.getByLabel("组别", { exact: true }).selectOption(group); await dialog.getByLabel("使用事项", { exact: true }).fill(title);
+    if (group === "g1") {
+      await dialog.getByRole("checkbox", { name: "deepseek", exact: true }).check();
+      await dialog.getByRole("checkbox", { name: "qwen", exact: true }).check();
+      await dialog.getByLabel("其他模型标记", { exact: true }).fill("llama");
+    }
     await dialog.getByRole("button", { name: "保存需求", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
   }
+  const dayDemand = page.locator(".workspace-demands tbody tr").filter({ hasText: "一组白天开发" });
+  await dayDemand.getByRole("button", { name: "编辑", exact: true }).click(); dialog = page.getByRole("dialog");
+  assert.equal(await dialog.getByRole("checkbox", { name: "deepseek", exact: true }).isChecked(), true);
+  assert.equal(await dialog.getByRole("checkbox", { name: "qwen", exact: true }).isChecked(), true);
+  assert.equal(await dialog.getByLabel("其他模型标记", { exact: true }).inputValue(), "llama");
+  await dialog.getByRole("checkbox", { name: "qwen", exact: true }).uncheck();
+  await dialog.getByRole("button", { name: "保存需求", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
+  assert.match(await dayDemand.innerText(), /deepseek.*llama/); assert.doesNotMatch(await dayDemand.innerText(), /qwen/);
   await page.getByRole("button", { name: "结束收集，进入协商", exact: true }).click();
   for (const title of ["一组白天开发", "二组白天开发"]) await page.getByLabel(title + "协商台数", { exact: true }).fill("1");
   await page.getByRole("button", { name: "保存协商数量", exact: true }).click();
@@ -62,6 +75,8 @@ try {
   await page.getByRole("button", { name: "填写多机需求", exact: true }).click(); dialog = page.getByRole("dialog");
   await dialog.getByLabel("组别", { exact: true }).selectOption("g1"); await dialog.getByLabel("使用事项", { exact: true }).fill("Qwen 连续多机训练");
   await dialog.getByLabel("所需总台数（含常态机）").fill("3");
+  await dialog.getByRole("checkbox", { name: "qwen", exact: true }).check();
+  await dialog.getByRole("checkbox", { name: "kimi", exact: true }).check();
   await dialog.locator(".workspace-slot-picker input").nth(0).check(); await dialog.locator(".workspace-slot-picker input").nth(1).check();
   await dialog.getByRole("checkbox", { name: "必须同一批服务器连续使用（请选择相邻时段）" }).check();
   assert.match(await dialog.innerText(), /填报后申请3 \/ 容量2 · 超额1/);
@@ -91,6 +106,8 @@ try {
   assert.equal(book.worksheets.length, 6); assert.equal(book.getWorksheet("多机需求").rowCount, 3); assert.equal(book.getWorksheet("多机分配").rowCount, 5);
   assert.equal(book.getWorksheet("时段容量").getCell("G2").value, 1); assert.equal(book.getWorksheet("时段容量").getCell("H2").value, 2);
   assert.match(book.getWorksheet("白天分配").getCell("I2").text, /在线表格直接修改用途/);
+  assert.match(book.getWorksheet("白天需求").getCell("J2").text, /deepseek.*llama/);
+  assert.match(book.getWorksheet("多机需求").getCell("K2").text, /qwen.*kimi/);
   await page.screenshot({ path: "outputs/guided-workflow/published.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: "outputs/guided-workflow/mobile.png", fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "mobile page must not overflow");
