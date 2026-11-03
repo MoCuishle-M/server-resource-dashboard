@@ -14,6 +14,7 @@ import { extensionResourceIds } from "./request-extension";
 import { resourceStatusLabels, visibleResourceState } from "./resource-policy";
 import { applyWeeklyAction, visibleWeeklyState } from "./weekly-actions";
 import { applyWeeklyTableAction } from "./weekly-table-actions";
+import { applyWorkspaceAction, suppressWorkspaceRanges } from "./weekly-workspace-actions";
 import { bookingAvailability, displacesBooking, priorityLabel, priorityRank } from "./priority";
 import { priorityAdjustmentPlan } from "./priority-adjustment";
 import { currentGroupContacts } from "./group-contact";
@@ -82,7 +83,7 @@ export function approvalConflicts(s: State, request: UsageRequest, notBefore?: s
     (b) =>
       b.status === "scheduled" &&
       request.resourceIds.includes(b.resourceId) &&
-      (resourceSharingMode(s.resources.find((r) => r.id === b.resourceId)) === "exclusive" ||
+      (resourceSharingMode(s.resources.find((r) => r.id === b.resourceId)) === "exclusive" || request.weeklySection === "multi" || s.requests.find(q => q.id === b.requestId)?.weeklySection === "multi" ||
         (priorityRank[b.priority] < priorityRank[request.priority] && displacesBooking(b, s.bookings, range))) &&
       overlaps(b, range),
   );
@@ -409,7 +410,8 @@ export function mutate(
       fail("服务器名称重复");
   }
   if (action.type.startsWith("weekly.")) {
-    if (action.type.startsWith("weekly.table.")) applyWeeklyTableAction(s, actor, action, now, { fail, audit });
+    if (action.type.startsWith("weekly.v2.")) applyWorkspaceAction(s, actor, action, now, { fail, audit });
+    else if (action.type.startsWith("weekly.table.")) applyWeeklyTableAction(s, actor, action, now, { fail, audit });
     else applyWeeklyAction(s, actor, action, now, { fail, audit });
     s.revision++;
     return s;
@@ -1084,6 +1086,7 @@ export function mutate(
       const before = { ...r };
       for (const { booking: b, cancelled, retained } of plan) {
         const old = { ...b };
+        if (r.weeklyPlanId) suppressWorkspaceRanges(s, [{ ...cancelled, resourceId: b.resourceId, groupId: b.groupId, planId: r.weeklyPlanId }]);
         // Preserve only the cancelled intersection as history; the tails remain active.
         Object.assign(b, cancelled, { status: "cancelled", updatedAt: now });
         const tails = retained.map(range => ({
@@ -1120,6 +1123,7 @@ export function mutate(
       delete r.pendingExtension;
       for (const b of future) {
         const old = { ...b };
+        if (r.weeklyPlanId) suppressWorkspaceRanges(s, [{ resourceId: b.resourceId, groupId: b.groupId, startAt: b.startAt < now ? now : b.startAt, endAt: b.endAt, planId: r.weeklyPlanId }]);
         if (b.startAt < now) {
           b.endAt = now;
           b.status = "released";

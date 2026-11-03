@@ -54,6 +54,7 @@ export function applyWeeklyTableAction(s: State, actor: Actor, a: Action, now: s
   }
   const p = s.weeklyPlans.find(p => p.id === a.planId); if (!p) fail("周计划不存在", 404);
   const plan = p!;
+  if (plan.v2) fail("双流程计划请使用新版排期操作", 409);
   if (weeklyPlanRange(plan).endAt <= now) fail("该周已经结束");
   const before = structuredClone(plan);
   if (a.type === "weekly.table.reopen") {

@@ -149,6 +149,14 @@ export function recommendTableRows(s: State, p: WeeklyPlan): WeeklyServerRow[] {
 
 export function clearFutureSchedules(s: State, resourceIds: string[], now: string) {
   const ids = new Set(resourceIds), clearedRequests = new Set<string>();
+  for (const p of s.weeklyPlans) if (p.v2 && weeklyPlanRange(p).endAt > now) {
+    for (const resourceId of resourceIds.filter(id => p.resourceIds?.includes(id))) p.v2.suppressions.push({ resourceId, startAt: now, endAt: weeklyPlanRange(p).endAt });
+    for (const sec of Object.values(p.v2.sections)) {
+      for (const row of sec.rows) if (ids.has(row.resourceId)) row.assignments = [];
+      for (const a of sec.allocations) a.resourceIds = a.resourceIds.filter(id => !ids.has(id));
+      sec.confirmations = []; if (sec.status === "confirming") sec.status = "draft";
+    }
+  }
   for (const b of s.bookings) if (ids.has(b.resourceId) && ["scheduled", "preempted"].includes(b.status) && b.endAt > now) {
     clearedRequests.add(b.requestId);
     if (b.startAt < now) { b.endAt = now; if (b.status === "scheduled") b.status = "released"; }

@@ -2,7 +2,7 @@ import { build } from "esbuild";
 import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 mkdirSync(".sites-runtime/tests", { recursive: true });
-for (const name of ["domain", "repository", "bulk-import", "schedule", "resource-search", "settings", "audit-search", "lingshu", "resource-visibility", "request-draft", "request-assignment", "request-priority", "fault-extension", "resource-time-blocks", "weekly", "weekly-table"])
+for (const name of ["domain", "repository", "bulk-import", "schedule", "resource-search", "settings", "audit-search", "lingshu", "resource-visibility", "request-draft", "request-assignment", "request-priority", "fault-extension", "resource-time-blocks", "weekly", "weekly-table", "weekly-workspace"])
   await build({
     entryPoints: [`tests/${name}.test.ts`],
     bundle: true,
@@ -15,6 +15,7 @@ const result = spawnSync(
   process.execPath,
   [
     "--test",
+    ".sites-runtime/tests/weekly-workspace.test.mjs",
     ".sites-runtime/tests/domain.test.mjs",
     ".sites-runtime/tests/repository.test.mjs",
     ".sites-runtime/tests/bulk-import.test.mjs",

@@ -80,7 +80,7 @@ import { bookingAvailability, displayBookings } from "@/lib/priority";
 import RequestAssignmentForm from "./request-assignment-form";
 import RequestPriorityForm from "./request-priority-form";
 import RequestExtensionForm from "./request-extension-form";
-import WeeklyPlanning from "./weekly-table-planning";
+import WeeklyPlanning from "./weekly-workspace";
 import { extensionResourceIds } from "@/lib/request-extension";
 import { activeDialog, FeedbackContext, OperationFeedback, type OperationNotice } from "./operation-feedback";
 import { copyRequestDraft } from "@/lib/request-draft";

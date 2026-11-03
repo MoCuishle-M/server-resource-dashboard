@@ -87,13 +87,13 @@ function ResourcePicker({ s, initial, busy, save }: { s: PublicState; initial: s
     <div className="weekly-picker">{rs.map(r => <label className="weekly-pick-row checkbox-label" key={r.id}><input type="checkbox" checked={ids.includes(r.id)} onChange={e => setIds(e.target.checked ? [...ids, r.id] : ids.filter(id => id !== r.id))} /><span>{r.name} · {r.ip}<small>{zone(r.zone)} · {r.type} · {r.rack || "未登记机柜"}</small></span></label>)}</div><div className="modal-footer"><button className="button primary" disabled={busy}>保存参与范围</button></div></form>;
 }
 
-export default function WeeklyTablePlanning({ state: s, busy, onAction: run, onDirty }: { state: PublicState; busy: boolean; onAction: Run; onDirty: (dirty: boolean) => void }) {
+export default function WeeklyTablePlanning({ state: s, busy, onAction: run, onDirty, initialPlanId }: { state: PublicState; busy: boolean; onAction: Run; onDirty: (dirty: boolean) => void; initialPlanId?: string }) {
   const [selected, setSelected] = useState(""), [tab, setTab] = useState<"schedule" | "demands">("schedule"), [dialog, setDialog] = useState<string | null>(null), [editing, setEditing] = useState<WeeklyDemand>(), [confirmGroup, setConfirmGroup] = useState("");
   const [sheetDirty, setSheetDirty] = useState(false);
   useEffect(() => { onDirty(sheetDirty); return () => onDirty(false); }, [sheetDirty, onDirty]);
   const [search, setSearch] = useState(""), [checked, setChecked] = useState<string[]>([]), [localError, setLocalError] = useState(""), [legacy, setLegacy] = useState(false);
   const admin = s.actor.role === "admin", contact = s.actor.role === "contact", plans = [...s.weeklyPlans].sort((a, b) => b.weekStart.localeCompare(a.weekStart));
-  const plan = plans.find(p => p.id === selected) ?? plans[0], rows = plan ? tableRows(s, plan) : [], demands = plan ? tableDemands(s, plan) : [];
+  const plan = plans.find(p => p.id === (selected || initialPlanId)) ?? plans[0], rows = plan ? tableRows(s, plan) : [], demands = plan ? tableDemands(s, plan) : [];
   const editable = !!plan && plan.layout === "table" && plan.status !== "published", name = (id: string) => s.groups.find(g => g.id === id)?.name ?? id;
   const issues = plan && admin && editable ? checkTablePlan(s, plan, s.now) : [], allocations = plan ? tableAllocations(s, plan) : [];
   const groups = plan ? tableGroups(s, plan) : [], close = () => { setDialog(null); setLocalError(""); };

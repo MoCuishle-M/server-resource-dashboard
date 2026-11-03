@@ -52,6 +52,7 @@ export type Account = {
   createdAt: string;
 };
 export type UsageRequest = {
+  weeklySection?: WeeklySectionName;
   id: string;
   weeklyPlanId?: string;
   weeklyDemandId?: string;
@@ -178,6 +179,7 @@ export type WeeklyAllocation = {
   note: string;
 };
 export type WeeklyPlan = {
+  v2?: WeeklyWorkspace;
   endAt?: string;
   layout?: "table";
   resourceIds?: string[];
@@ -194,6 +196,25 @@ export type WeeklyPlan = {
   createdAt: string;
   updatedAt: string;
   publishedAt: string;
+};
+export type WeeklySectionName = "day" | "multi";
+export type WeeklySlot = { id: string; label: string; startAt: string; endAt: string; enabled: boolean; saturdayDay: boolean };
+export type WorkspaceDemand = {
+  id: string; groupId: string; title: string; desired: number; negotiated?: number;
+  slotIds: string[]; continuous: boolean; sameRackCount: number; shareCount: number;
+  model: string; requirements: string; applicantName: string;
+};
+export type WorkspaceAllocation = { demandId: string; slotId: string; resourceIds: string[]; locked: boolean };
+export type WorkspaceSnapshot = { demands: WorkspaceDemand[]; allocations: WorkspaceAllocation[]; rows: WeeklyServerRow[]; slots: WeeklySlot[]; publishedAt: string };
+export type WorkspaceSection = {
+  status: WeeklyPlan["status"]; demands: WorkspaceDemand[]; allocations: WorkspaceAllocation[];
+  rows: WeeklyServerRow[]; confirmations: WeeklyPlan["confirmations"]; published?: WorkspaceSnapshot;
+};
+export type WeeklyWorkspace = {
+  version: 2; startAt: string; slots: WeeklySlot[]; participantGroupIds: string[];
+  priorityNote: string; previousRows: WeeklyServerRow[];
+  sections: Record<WeeklySectionName, WorkspaceSection>;
+  suppressions: { resourceId: string; startAt: string; endAt: string; groupId?: string }[];
 };
 export type Actor = {
   userId: string;

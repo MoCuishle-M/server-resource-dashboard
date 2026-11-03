@@ -43,6 +43,7 @@ export function applyWeeklyAction(s: State, actor: Actor, a: Action, now: string
   const p = s.weeklyPlans.find(p => p.id === a.planId);
   if (!p) fail("周排期不存在", 404);
   const plan = p!;
+  if (plan.v2) fail("双流程计划请使用新版排期操作", 409);
   if (plan.status === "published") fail("该周已发布；请通过原有申请、续期或取消功能处理临时事项，已发布方案保持不变", 409);
   if (calendarRange(plan.weekStart, "week").endAt <= now) fail("该周已经结束，不能再修改排期", 409);
   const before = structuredClone(plan);
@@ -211,6 +212,29 @@ export function applyWeeklyAction(s: State, actor: Actor, a: Action, now: string
 }
 
 /** Table drafts are shared by admins and approved contacts; public viewers only see published plans. */
+function visibleWorkspace(p: WeeklyPlan, hidden: Set<string>, contact: boolean) {
+  const w = structuredClone(p.v2!);
+  const safe = (sec: typeof w.sections.day) => {
+    const redact = (value: Pick<typeof sec, "rows" | "allocations" | "demands">) => {
+      const privateIds = new Set(value.allocations.filter(a => a.resourceIds.some(id => hidden.has(id))).map(a => a.demandId));
+      value.demands = value.demands.filter(d => !privateIds.has(d.id)).map(d => ({ ...d, applicantName: contact ? d.applicantName : "" }));
+      value.allocations = value.allocations.filter(a => !privateIds.has(a.demandId));
+      value.rows = value.rows.filter(r => !hidden.has(r.resourceId));
+    };
+    if (!contact) {
+      const published = sec.published;
+      sec = { status: published ? "published" : "collecting", demands: published?.demands ?? [], allocations: published?.allocations ?? [], rows: published?.rows ?? [], confirmations: [], published };
+    }
+    redact(sec); if (sec.published) redact(sec.published);
+    sec.confirmations = contact ? sec.confirmations : [];
+    return sec;
+  };
+  w.sections = { day: safe(w.sections.day), multi: safe(w.sections.multi) };
+  w.previousRows = contact ? w.previousRows.filter(r => !hidden.has(r.resourceId)) : [];
+  w.suppressions = w.suppressions.filter(x => !hidden.has(x.resourceId));
+  if (!contact) w.slots = w.sections.multi.published?.slots ?? [];
+  return w;
+}
 export function visibleWeeklyState(s: State, actor: Actor): Pick<State, "weeklyPlans" | "weeklyDemands"> {
   if (actor.role === "admin") return { weeklyPlans: s.weeklyPlans, weeklyDemands: s.weeklyDemands };
   const contact = actor.role === "contact";
@@ -224,10 +248,11 @@ export function visibleWeeklyState(s: State, actor: Actor): Pick<State, "weeklyP
   return {
     weeklyDemands: visible.map(d => own(d.id) ? d : { ...d, applicantId: "", reason: "", timeNote: "", shareNote: "", shareWithDemandIds: [], lines: d.lines.map(l => ({ ...l, preferredResourceIds: [] })) }),
     weeklyPlans: plans.map(p => ({ ...p,
+      ...(p.v2 ? { v2: visibleWorkspace(p, hidden, contact) } : {}),
       resourceIds: p.resourceIds?.filter(id => !hidden.has(id)),
       clearedResourceIds: p.clearedResourceIds?.filter(id => !hidden.has(id)),
       aiNote: "",
-      rows: p.rows?.filter(row => !hidden.has(row.resourceId)).map(row => ({ ...row, assignments: row.assignments.filter(a => p.status === "published" || (contact && (p.layout === "table" || a.groupId === actor.groupId))) })),
+      rows: (p.v2 && !contact ? p.v2.sections.day.published?.rows ?? [] : p.rows)?.filter(row => !hidden.has(row.resourceId)).map(row => ({ ...row, assignments: row.assignments.filter(a => p.status === "published" || (contact && (p.layout === "table" || a.groupId === actor.groupId))) })),
       directory: contact ? ds.filter(d => d.planId === p.id && d.status === "active").map(d => ({ id: d.id, title: d.title, groupId: d.groupId })) : [],
       allocations: p.allocations.filter(a => visible.some(d => d.id === a.demandId)).map(a => own(a.demandId) ? a : { ...a, note: "" }),
       deferred: p.deferred.filter(a => visible.some(d => d.id === a.demandId)).map(a => own(a.demandId) ? a : { ...a, reason: "本周暂缓" }),
