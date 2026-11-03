@@ -19,6 +19,13 @@ try {
   const rules = page.locator(".workflow-settings"), groups = rules.locator("fieldset input[type=checkbox]");
   for (let i = 2; i < await groups.count(); i++) await groups.nth(i).uncheck();
   await rules.getByRole("checkbox", { name: "本周周六白天开放多机（09:00–19:00）" }).check();
+  const modelRules = [["deepseek", "0"], ["qwen", "1"], ["llama", "2"], ["kimi", "3"]];
+  for (const [i, [label, priority]] of modelRules.entries()) {
+    await rules.getByRole("button", { name: "添加模型标签", exact: true }).click();
+    await rules.getByLabel(`模型标签名称 ${i + 1}`, { exact: true }).fill(label);
+    await rules.getByLabel(`模型标签优先级 ${i + 1}`, { exact: true }).selectOption(priority);
+  }
+  await page.screenshot({ path: "outputs/guided-workflow/model-rules.png", fullPage: true });
   await rules.getByRole("button", { name: "完成规则，开放需求收集", exact: true }).click();
   await page.getByRole("button", { name: "填写白天需求", exact: true }).waitFor();
   await page.screenshot({ path: "outputs/guided-workflow/collect.png", fullPage: true });
@@ -28,7 +35,7 @@ try {
     if (group === "g1") {
       await dialog.getByRole("checkbox", { name: "deepseek", exact: true }).check();
       await dialog.getByRole("checkbox", { name: "qwen", exact: true }).check();
-      await dialog.getByLabel("其他模型标记", { exact: true }).fill("llama");
+      await dialog.getByRole("checkbox", { name: "llama", exact: true }).check();
     }
     await dialog.getByRole("button", { name: "保存需求", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
   }
@@ -36,10 +43,11 @@ try {
   await dayDemand.getByRole("button", { name: "编辑", exact: true }).click(); dialog = page.getByRole("dialog");
   assert.equal(await dialog.getByRole("checkbox", { name: "deepseek", exact: true }).isChecked(), true);
   assert.equal(await dialog.getByRole("checkbox", { name: "qwen", exact: true }).isChecked(), true);
-  assert.equal(await dialog.getByLabel("其他模型标记", { exact: true }).inputValue(), "llama");
+  assert.equal(await dialog.getByRole("checkbox", { name: "llama", exact: true }).isChecked(), true);
+  assert.equal(await dialog.getByRole("checkbox", { name: "glm", exact: true }).count(), 0);
   await dialog.getByRole("checkbox", { name: "qwen", exact: true }).uncheck();
   await dialog.getByRole("button", { name: "保存需求", exact: true }).click(); await dialog.waitFor({ state: "hidden" });
-  assert.match(await dayDemand.innerText(), /deepseek.*llama/); assert.doesNotMatch(await dayDemand.innerText(), /qwen/);
+  assert.match(await dayDemand.innerText(), /deepseek.*llama/); assert.match(await dayDemand.innerText(), /P0/); assert.doesNotMatch(await dayDemand.innerText(), /qwen/);
   await page.getByRole("button", { name: "结束收集，进入协商", exact: true }).click();
   for (const title of ["一组白天开发", "二组白天开发"]) await page.getByLabel(title + "协商台数", { exact: true }).fill("1");
   await page.getByRole("button", { name: "保存协商数量", exact: true }).click();
@@ -108,6 +116,9 @@ try {
   assert.match(book.getWorksheet("白天分配").getCell("I2").text, /在线表格直接修改用途/);
   assert.match(book.getWorksheet("白天需求").getCell("J2").text, /deepseek.*llama/);
   assert.match(book.getWorksheet("多机需求").getCell("K2").text, /qwen.*kimi/);
+  assert.match(book.getWorksheet("白天需求").getCell("L2").text, /P0/);
+  assert.match(book.getWorksheet("多机需求").getCell("O2").text, /P1/);
+  assert.match(book.getWorksheet("发布与使用说明").getColumn(1).values.join(" "), /模型标签：llama/);
   await page.screenshot({ path: "outputs/guided-workflow/published.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: "outputs/guided-workflow/mobile.png", fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "mobile page must not overflow");

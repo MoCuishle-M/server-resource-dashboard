@@ -22,8 +22,10 @@ try {
   const planId = state.weeklyPlans.find(p => p.weekStart === monday).id;
   const run = (type, data = {}, section = "multi", expected = 200) => action({ type: `weekly.v2.${type}`, planId, section, ...data }, expected);
   await run("recommend", {}, "day", 409);
-  await run("settings", { completeSetup: true }, "day");
+  const modelRules = [{ id: "api-tag-a", name: "API自定义模型", priority: 0 }, { id: "api-tag-b", name: "API次要模型", priority: 2 }];
+  await run("settings", { completeSetup: true, modelTags: modelRules, beforeModelTags: state.weeklyPlans.find(p => p.id === planId).v2.modelTags ?? [] }, "day");
   const plan = () => state.weeklyPlans.find(p => p.id === planId), sec = (part = "multi") => plan().v2.sections[part];
+  assert.deepEqual(plan().v2.modelTags, modelRules);
   for (const groupId of ["g1", "g2"]) await run("demand", { demand: { groupId, title: `${groupId}白天API`, desired: 1, negotiated: 1 } }, "day");
   await run("recommend", {}, "day");
   const dayBefore = structuredClone(sec("day").rows), dayRows = structuredClone(dayBefore);

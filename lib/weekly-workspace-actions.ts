@@ -1,4 +1,5 @@
-import type { Action, Actor, State, WeeklyPlan, WeeklySectionName, WeeklyServerRow, WorkspaceAllocation, WorkspaceDemand, WorkspaceSection } from "./types";
+import type { Action, Actor, DemandModelTag, State, WeeklyPlan, WeeklySectionName, WeeklyServerRow, WorkspaceAllocation, WorkspaceDemand, WorkspaceModelTag, WorkspaceSection } from "./types";
+import { demandModelTags, splitModelNames } from "./model-tags";
 import { calendarRange, shiftDate } from "./schedule";
 import { inheritedTableRows } from "./weekly-table";
 import { PLATFORM_GROUP_ID } from "./lingshu";
@@ -28,7 +29,7 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
     const rows: WeeklyServerRow[] = pool.map(id => ({ resourceId: id, assignments: (inherited.find(r => r.resourceId === id)?.assignments ?? []).map(x => ({ groupId: x.groupId, purpose: x.purpose })), specialNote: inherited.find(r => r.resourceId === id)?.specialNote ?? "" }));
     const participantGroupIds = groups(a.groupIds ?? previous?.v2?.participantGroupIds ?? s.groups.filter(g => g.id !== PLATFORM_GROUP_ID).map(g => g.id));
     const p: WeeklyPlan = { id: crypto.randomUUID(), weekStart: week, endAt, layout: "table", resourceIds: pool, rows: structuredClone(rows), status: "collecting", allocations: [], deferred: [], confirmations: [], createdAt: now, updatedAt: now, publishedAt: "",
-      v2: { version: 2, setup: { completedAt: "", by: "" }, startAt, slots: makeWeeklySlots(week), participantGroupIds, priorityNote: "deepseek、qwen、glm、kimi 系列模型优先；具体数量由会议协商。", previousRows: structuredClone(rows), suppressions: [], sections: { day: { ...fresh(), rows }, multi: fresh() } } };
+      v2: { version: 2, modelTags: structuredClone(previous?.v2?.modelTags ?? []), setup: { completedAt: "", by: "" }, startAt, slots: makeWeeklySlots(week), participantGroupIds, priorityNote: previous?.v2?.priorityNote ?? "", previousRows: structuredClone(rows), suppressions: [], sections: { day: { ...fresh(), rows }, multi: fresh() } } };
     s.weeklyPlans.push(p); audit("创建双流程周计划", "weekly", p.id, `${week}周，${pool.length}台蓝区A5`, null, p); return;
   }
   const p = s.weeklyPlans.find(p => p.id === a.planId);
@@ -60,6 +61,19 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
         w.participantGroupIds = chosen;
       }
       if (a.priorityNote !== undefined) w.priorityNote = text(a.priorityNote, "优先级说明", false, 2000);
+      if (a.modelTags !== undefined) {
+        if (a.beforeModelTags !== undefined && JSON.stringify(a.beforeModelTags) !== JSON.stringify(w.modelTags ?? [])) fail("模型标签配置已被其他人修改，输入已保留，请核对最新配置", 409);
+        if (!Array.isArray(a.modelTags) || a.modelTags.length > 50) fail("最多配置50个模型标签");
+        const tags = (a.modelTags as WorkspaceModelTag[]).map(tag => {
+          if (!tag || typeof tag !== "object") fail("模型标签格式不正确");
+          const name = text(tag.name, "模型标签名称", true, 80), id = text(tag.id, "模型标签标识", true, 100);
+          if (/[、,，;；\n]/.test(name)) fail("每个模型标签请填写一个名称，不包含分隔符");
+          if (!Number.isInteger(tag.priority) || tag.priority < 0 || tag.priority > 3) fail("请选择P0至P3的模型优先级");
+          return { id, name, priority: tag.priority };
+        });
+        if (new Set(tags.map(x => x.id)).size !== tags.length || new Set(tags.map(x => x.name.toLowerCase())).size !== tags.length) fail("模型标签名称或标识不能重复");
+        w.modelTags = tags;
+      }
       if (a.saturdayEnabled !== undefined) {
         if (typeof a.saturdayEnabled !== "boolean") fail("周六开关格式不正确");
         const affected = w.sections.multi.demands.filter(d => d.slotIds.some(id => w.slots.some(x => x.id === id && x.saturdayDay)));
@@ -67,7 +81,7 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
         for (const slot of w.slots) if (slot.saturdayDay) slot.enabled = a.saturdayEnabled as boolean;
       }
       if (a.completeSetup === true) w.setup = { completedAt: now, by: actor.displayName };
-      const globalChange = a.resourceIds !== undefined || a.groupIds !== undefined || a.priorityNote !== undefined || a.saturdayEnabled !== undefined;
+      const globalChange = a.resourceIds !== undefined || a.groupIds !== undefined || a.priorityNote !== undefined || a.saturdayEnabled !== undefined || a.modelTags !== undefined;
       if (globalChange) for (const section of Object.values(w.sections)) if (section !== sec && section.status !== "published") { section.confirmations = []; if (section.status === "confirming") section.status = "draft"; }
       touch(); break;
     }
@@ -92,7 +106,18 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
       if (continuous && chosen.some((x, i) => i > 0 && chosen[i - 1].endAt !== x.startAt)) fail("同一批服务器连续使用需选择相邻时段");
       const sameRackCount = num(v.sameRackCount ?? 0, "同柜数量"), shareCount = part === "day" ? num(v.shareCount ?? 0, "可共用数量") : 0;
       if (sameRackCount > desired || shareCount > desired) fail("同柜数量和共用数量不能超过申请数量");
-      const d: WorkspaceDemand = { id: old?.id ?? crypto.randomUUID(), groupId, title: text(v.title, "使用事项"), desired, negotiated, slotIds, continuous, sameRackCount, shareCount, model: text(v.model ?? "", "模型标记", false, 100), requirements: text(v.requirements ?? "", "要求", false, 2000), applicantName: old?.applicantName ?? actor.displayName };
+      const rules = w.modelTags ?? [], retained = old ? demandModelTags(old, rules) : [];
+      let selected: DemandModelTag[];
+      if (v.modelTags !== undefined) {
+        if (!Array.isArray(v.modelTags) || v.modelTags.length > 20) fail("最多选择20个模型标签");
+        const tagIds = ids(v.modelTags.map(t => t?.id), "模型标签");
+        selected = tagIds.map(id => { const tag = rules.find(t => t.id === id) ?? retained.find(t => t.id === id); if (!tag) fail("所选模型标签尚未由管理员配置，请刷新后重新选择"); return structuredClone(tag!); });
+      } else {
+        const names = splitModelNames(text(v.model ?? "", "模型标记", false, 2000));
+        if (names.length > 20) fail("最多选择20个模型标签");
+        selected = names.map(name => { const tag = rules.find(t => t.name.toLowerCase() === name.toLowerCase()) ?? retained.find(t => t.name.toLowerCase() === name.toLowerCase()); if (!tag) fail(`模型“${name}”尚未由管理员配置，请先在第一步添加`); return structuredClone(tag!); });
+      }
+      const d: WorkspaceDemand = { id: old?.id ?? crypto.randomUUID(), groupId, title: text(v.title, "使用事项"), desired, negotiated, slotIds, continuous, sameRackCount, shareCount, model: selected.map(t => t.name).join("、"), modelTags: selected, requirements: text(v.requirements ?? "", "要求", false, 2000), applicantName: old?.applicantName ?? actor.displayName };
       if (old) sec.demands[sec.demands.indexOf(old)] = d; else sec.demands.push(d);
       sec.allocations = sec.allocations.filter(x => x.demandId !== d.id);
       for (const row of sec.rows) row.assignments = row.assignments.map(x => x.demandId === d.id ? { groupId: x.groupId, purpose: d.title } : x);
@@ -216,7 +241,7 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
         if (active) w.suppressions = w.suppressions.flatMap(x => x.resourceId !== restoration.resourceId || (x.groupId && x.groupId !== restoration.groupId) ? [x] : subtractRanges(x, [restoration]).map(range => ({ ...x, ...range })));
       }
       sec.restorations = [];
-      sec.published = { demands: structuredClone(sec.demands), allocations: structuredClone(sec.allocations), rows: structuredClone(sec.rows), slots: structuredClone(w.slots), publishedAt: now };
+      sec.published = { modelTags: structuredClone(w.modelTags ?? []), demands: structuredClone(sec.demands), allocations: structuredClone(sec.allocations), rows: structuredClone(sec.rows), slots: structuredClone(w.slots), publishedAt: now };
       sec.status = "published"; plan.status = "published"; plan.publishedAt = now; plan.updatedAt = now;
       if (part === "day") { plan.rows = structuredClone(sec.rows); for (const row of sec.rows) if (row.assignments.length > 1) { const r = s.resources.find(x => x.id === row.resourceId)!; r.sharingMode = "shared"; r.updatedAt = now; } }
       rebuildWorkspaceBookings(s, plan, now, actor); break;

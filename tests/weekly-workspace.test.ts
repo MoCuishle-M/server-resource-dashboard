@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { approvalConflicts, emptyState, mutate, serializePublic } from "../lib/domain";
 import { makeWeeklySlots, demandAssigned, sectionGroups, sectionIssues, workspaceCapacity } from "../lib/weekly-workspace";
+import { demandModelTags, demandModelPriority } from "../lib/model-tags";
 import type { Actor, State, WeeklySectionName, WorkspaceDemand } from "../lib/types";
 import { Miniflare } from "miniflare";
 import { readFile, readdir } from "node:fs/promises";
@@ -18,7 +19,7 @@ function setup(n = 6) {
   let s = emptyState();
   s.resources = Array.from({ length: n }, (_, i) => ({ id: `r${i}`, name: `A5-${i}`, ip: `192.0.2.${i + 1}`, type: "A5八卡", zone: "blue" as const, family: "A5" as const, rack: `柜${Math.floor(i / 4) + 1}`, accessMode: "bare" as const, location: "测试", sharingMode: "exclusive" as const, status: "available" as const, note: "", deleted: false, createdAt: now, updatedAt: now }));
   s = act(s, "create", { weekStart: week, groupIds: ["g1", "g2"] });
-  return act(s, "settings", { completeSetup: true }, "day");
+  return act(s, "settings", { completeSetup: true, modelTags: [{ id: "model-qwen", name: "qwen", priority: 2 }] }, "day");
 }
 function demand(s: State, extras: Partial<WorkspaceDemand> = {}, part: WeeklySectionName = "multi", actor = admin) {
   return act(s, "demand", { demand: { groupId: "g1", title: "训练", desired: 2, negotiated: 2, slotIds: ["0-晚上"], continuous: false, sameRackCount: 0, shareCount: 0, model: "qwen", requirements: "", ...extras } }, part, actor);
@@ -232,4 +233,40 @@ test("multi sheet saves swaps atomically and checks continuous batches, conflict
   const split = allocations.map(a => ({ ...a, resourceIds: a.demandId === d2 && a.slotId === "0-凌晨" ? ["r4"] : a.resourceIds }));
   assert.throws(() => act(s, "multiSheet", { before: allocations, allocations: split }), /同一批/);
   assert.throws(() => act(s, "multiSheet", { before: allocations, allocations }, "multi", contact), /管理员/);
+});
+
+test("administrators configure model names and priorities; demands use authoritative configuration", () => {
+  let s = setup(); const rules = [{ id: "a", name: "自研模型", priority: 0 }, { id: "b", name: "视觉模型", priority: 2 }];
+  assert.throws(() => act(s, "settings", { modelTags: rules }, "day", contact), /管理员/);
+  s = act(s, "settings", { modelTags: rules, beforeModelTags: plan(s).v2!.modelTags }, "day");
+  s = demand(s, { model: "", modelTags: [{ id: "a", name: "伪造名称", priority: 3 }, { id: "b", name: "视觉模型", priority: 0 }] });
+  const d = sec(s).demands[0]; assert.equal(d.model, "自研模型、视觉模型"); assert.deepEqual(d.modelTags, rules);
+  assert.equal(demandModelPriority(d, plan(s).v2!.modelTags), 0);
+  assert.throws(() => demand(s, { modelTags: [{ id: "unknown", name: "未配置" }] }), /管理员配置/);
+  assert.throws(() => demand(s, { model: "随意新建" }), /管理员配置/);
+  assert.throws(() => act(s, "settings", { modelTags: [{ id: "a", name: "A", priority: 7 }] }, "day"), /P0至P3/);
+  assert.throws(() => act(s, "settings", { modelTags: [{ id: "a", name: "Qwen", priority: 0 }, { id: "b", name: "qwen", priority: 1 }] }, "day"), /不能重复/);
+  assert.throws(() => act(s, "settings", { modelTags: [], beforeModelTags: [] }, "day"), /其他人修改/);
+});
+
+test("renamed or removed labels preserve existing demands and published history; new weeks inherit rules", () => {
+  let s = demand(setup()); const d = structuredClone(sec(s).demands[0]), original = plan(s).v2!.modelTags!;
+  s = act(s, "settings", { modelTags: [{ ...original[0], name: "新模型名", priority: 0 }] }, "day");
+  assert.equal(demandModelTags(d, plan(s).v2!.modelTags)[0].name, "新模型名");
+  s = act(s, "settings", { modelTags: [] }, "day");
+  s = demand(s, { ...d, title: "保留原标签" }); assert.equal(sec(s).demands[0].model, "qwen");
+  const textOnly = { model: "以前的模型" }; assert.equal(demandModelTags(textOnly)[0].name, "以前的模型"); assert.equal(demandModelPriority(textOnly), undefined);
+  s = act(s, "settings", { modelTags: original, priorityNote: "管理员配置的会议说明" }, "day");
+  s = act(s, "recommend"); s = publish(s, "multi"); const snapshot = structuredClone(sec(s).published);
+  s = act(s, "settings", { modelTags: [{ ...original[0], priority: 0 }] }, "day");
+  assert.deepEqual(sec(s).published!.modelTags, snapshot!.modelTags);
+  s = act(s, "create", { weekStart: "2026-11-16", groupIds: ["g1", "g2"] });
+  assert.deepEqual(s.weeklyPlans[1].v2!.modelTags, plan(s).v2!.modelTags); assert.equal(s.weeklyPlans[1].v2!.priorityNote, "管理员配置的会议说明");
+});
+
+test("model priorities remain informational and do not change recommendation order", () => {
+  let s = demand(demand(setup(), { title: "一" }), { title: "二", groupId: "g2" });
+  const baseline = act(s, "recommend");
+  s = act(s, "settings", { modelTags: [{ id: "model-qwen", name: "qwen", priority: 0 }] }, "day");
+  const after = act(s, "recommend"); assert.deepEqual(sec(after).allocations, sec(baseline).allocations);
 });

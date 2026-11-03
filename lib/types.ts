@@ -200,18 +200,23 @@ export type WeeklyPlan = {
 export type WeeklySectionName = "day" | "multi";
 export type WeeklySlot = { id: string; label: string; startAt: string; endAt: string; enabled: boolean; saturdayDay: boolean };
 export type WorkspaceDemand = {
+  modelTags?: DemandModelTag[];
   id: string; groupId: string; title: string; desired: number; negotiated?: number;
   slotIds: string[]; continuous: boolean; sameRackCount: number; shareCount: number;
   model: string; requirements: string; applicantName: string;
 };
 export type WorkspaceAllocation = { demandId: string; slotId: string; resourceIds: string[]; locked: boolean };
-export type WorkspaceSnapshot = { demands: WorkspaceDemand[]; allocations: WorkspaceAllocation[]; rows: WeeklyServerRow[]; slots: WeeklySlot[]; publishedAt: string };
+export type ModelPriority = 0 | 1 | 2 | 3;
+export type WorkspaceModelTag = { id: string; name: string; priority: ModelPriority };
+export type DemandModelTag = { id: string; name: string; priority?: ModelPriority };
+export type WorkspaceSnapshot = { modelTags?: WorkspaceModelTag[]; demands: WorkspaceDemand[]; allocations: WorkspaceAllocation[]; rows: WeeklyServerRow[]; slots: WeeklySlot[]; publishedAt: string };
 export type WorkspaceSection = {
   restorations?: { resourceId: string; groupId: string; startAt: string; endAt: string }[];
   status: WeeklyPlan["status"]; demands: WorkspaceDemand[]; allocations: WorkspaceAllocation[];
   rows: WeeklyServerRow[]; confirmations: WeeklyPlan["confirmations"]; published?: WorkspaceSnapshot;
 };
 export type WeeklyWorkspace = {
+  modelTags?: WorkspaceModelTag[];
   setup?: { completedAt: string; by: string };
   version: 2; startAt: string; slots: WeeklySlot[]; participantGroupIds: string[];
   priorityNote: string; previousRows: WeeklyServerRow[];

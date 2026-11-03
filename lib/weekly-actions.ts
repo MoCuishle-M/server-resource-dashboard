@@ -234,6 +234,7 @@ function visibleWorkspace(p: WeeklyPlan, hidden: Set<string>, contact: boolean) 
   w.previousRows = contact ? w.previousRows.filter(r => !hidden.has(r.resourceId)) : [];
   w.suppressions = w.suppressions.filter(x => !hidden.has(x.resourceId));
   if (!contact) w.slots = w.sections.multi.published?.slots ?? [];
+  if (!contact) w.modelTags = [...new Map([...(w.sections.day.published?.modelTags ?? []), ...(w.sections.multi.published?.modelTags ?? [])].map(t => [t.id, t])).values()];
   return w;
 }
 export function visibleWeeklyState(s: State, actor: Actor): Pick<State, "weeklyPlans" | "weeklyDemands"> {
