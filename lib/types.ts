@@ -207,6 +207,7 @@ export type WorkspaceDemand = {
 export type WorkspaceAllocation = { demandId: string; slotId: string; resourceIds: string[]; locked: boolean };
 export type WorkspaceSnapshot = { demands: WorkspaceDemand[]; allocations: WorkspaceAllocation[]; rows: WeeklyServerRow[]; slots: WeeklySlot[]; publishedAt: string };
 export type WorkspaceSection = {
+  restorations?: { resourceId: string; groupId: string; startAt: string; endAt: string }[];
   status: WeeklyPlan["status"]; demands: WorkspaceDemand[]; allocations: WorkspaceAllocation[];
   rows: WeeklyServerRow[]; confirmations: WeeklyPlan["confirmations"]; published?: WorkspaceSnapshot;
 };

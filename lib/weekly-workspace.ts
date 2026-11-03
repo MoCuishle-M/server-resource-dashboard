@@ -104,7 +104,7 @@ export function recommendSection(s: State, p: WeeklyPlan, part: WeeklySectionNam
       const ranges = batch.map(id => id === "day" ? { id, ...workspaceRange(p) } : w.slots.find(x => x.id === id)!);
       const locked = sec.allocations.filter(a => a.demandId === d.id && batch.includes(a.slotId) && a.locked);
       let ids = locked[0]?.resourceIds.slice() ?? [];
-      const free = (r: Resource) => !ranges.some(range => resourceUnavailable(s, p, r, range, now)) && !sec.allocations.some(a => a.demandId !== d.id && a.resourceIds.includes(r.id) && (part === "day" ? sec.demands.find(x => x.id === a.demandId)?.groupId === d.groupId : batch.includes(a.slotId)))
+      const free = (r: Resource) => !ranges.some(range => resourceUnavailable(s, p, r, range, now) || w.suppressions.some(x => x.resourceId === r.id && (!x.groupId || x.groupId === d.groupId) && overlaps(x, range))) && !sec.allocations.some(a => a.demandId !== d.id && a.resourceIds.includes(r.id) && (part === "day" ? sec.demands.find(x => x.id === a.demandId)?.groupId === d.groupId : batch.includes(a.slotId)))
         && (part !== "day" || !sec.rows.find(row => row.resourceId === r.id)?.assignments.some(a => a.groupId !== d.groupId));
       const candidates = s.resources.filter(r => p.resourceIds?.includes(r.id) && free(r));
       const prior = new Set(old.filter(a => a.demandId === d.id && batch.includes(a.slotId)).flatMap(a => a.resourceIds));
@@ -120,7 +120,7 @@ export function recommendSection(s: State, p: WeeklyPlan, part: WeeklySectionNam
         // Explicitly permitted shared day assignments are a fallback, with peer limits checked.
         if (part === "day" && ids.length < (d.negotiated ?? 0)) for (const row of sec.rows) {
           const r = s.resources.find(r => r.id === row.resourceId)!;
-          if (ids.includes(row.resourceId) || !r || !p.resourceIds?.includes(r.id) || resourceUnavailable(s, p, r, workspaceRange(p), now)) continue;
+          if (ids.includes(row.resourceId) || !r || !p.resourceIds?.includes(r.id) || resourceUnavailable(s, p, r, workspaceRange(p), now) || w.suppressions.some(x => x.resourceId === r.id && (!x.groupId || x.groupId === d.groupId))) continue;
           const sharedSoFar = ids.filter(id => sec.rows.find(row => row.resourceId === id)?.assignments.some(a => a.groupId !== d.groupId)).length;
           if (sharedSoFar >= d.shareCount || row.assignments.some(a => a.groupId === d.groupId)) continue;
           const peerOk = row.assignments.every(a => { const peer = sec.demands.find(x => x.id === a.demandId); return !peer || demandAssigned(sec, peer).filter(id => (sec.rows.find(row => row.resourceId === id)?.assignments.length ?? 0) > 1).length < peer.shareCount; });

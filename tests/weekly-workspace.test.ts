@@ -184,3 +184,15 @@ test("multi bookings remain exclusive to their task even if the daytime server i
   const own = s.requests.find(q => q.weeklySection === "multi")!;
   assert.equal(approvalConflicts(s, { ...own, id: "external", weeklySection: undefined, groupId: "g2" }).length, 1);
 });
+
+test("cleared machines can be explicitly reassigned, only taking effect on the target section publication", () => {
+  let s = publish(dayPlan(), "day");
+  s = mutate(s, admin, { type: "weekly.table.clear", resourceIds: ["r0"], reason: "重新安排" }, now);
+  s = demand(s, { title: "新任务", desired: 1, negotiated: 1 });
+  s = act(s, "recommend"); assert.ok(!demandAssigned(sec(s), sec(s).demands[0], "0-晚上").includes("r0"));
+  s = act(s, "assign", { demandId: sec(s).demands[0].id, slotId: "0-晚上", resourceIds: ["r0"], locked: true });
+  assert.ok(!s.bookings.some(b => b.status === "scheduled" && b.resourceId === "r0"));
+  s = publish(s, "multi");
+  const slot = plan(s).v2!.slots[0], current = s.bookings.filter(b => b.status === "scheduled" && b.resourceId === "r0");
+  assert.equal(current.length, 1); assert.equal(current[0].startAt, slot.startAt); assert.equal(current[0].endAt, slot.endAt);
+});

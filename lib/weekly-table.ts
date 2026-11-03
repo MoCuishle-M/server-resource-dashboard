@@ -152,6 +152,7 @@ export function clearFutureSchedules(s: State, resourceIds: string[], now: strin
   for (const p of s.weeklyPlans) if (p.v2 && weeklyPlanRange(p).endAt > now) {
     for (const resourceId of resourceIds.filter(id => p.resourceIds?.includes(id))) p.v2.suppressions.push({ resourceId, startAt: now, endAt: weeklyPlanRange(p).endAt });
     for (const sec of Object.values(p.v2.sections)) {
+      sec.restorations = sec.restorations?.filter(x => !ids.has(x.resourceId));
       for (const row of sec.rows) if (ids.has(row.resourceId)) row.assignments = [];
       for (const a of sec.allocations) a.resourceIds = a.resourceIds.filter(id => !ids.has(id));
       sec.confirmations = []; if (sec.status === "confirming") sec.status = "draft";

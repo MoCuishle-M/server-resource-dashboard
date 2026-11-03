@@ -226,6 +226,7 @@ function visibleWorkspace(p: WeeklyPlan, hidden: Set<string>, contact: boolean) 
       sec = { status: published ? "published" : "collecting", demands: published?.demands ?? [], allocations: published?.allocations ?? [], rows: published?.rows ?? [], confirmations: [], published };
     }
     redact(sec); if (sec.published) redact(sec.published);
+    sec.restorations = contact ? sec.restorations?.filter(x => !hidden.has(x.resourceId)) : [];
     sec.confirmations = contact ? sec.confirmations : [];
     return sec;
   };

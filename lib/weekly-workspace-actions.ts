@@ -2,7 +2,7 @@ import type { Action, Actor, State, WeeklyPlan, WeeklySectionName, WeeklyServerR
 import { calendarRange, shiftDate } from "./schedule";
 import { inheritedTableRows } from "./weekly-table";
 import { PLATFORM_GROUP_ID } from "./lingshu";
-import { blueA5, makeWeeklySlots, recommendSection, rebuildWorkspaceBookings, resourceUnavailable, sectionGroups, sectionIssues, workspaceRange } from "./weekly-workspace";
+import { blueA5, makeWeeklySlots, recommendSection, rebuildWorkspaceBookings, resourceUnavailable, sectionGroups, sectionIssues, subtractRanges, workspaceRange } from "./weekly-workspace";
 
 type Helpers = { fail: (message: string, status?: number) => never; audit: (kind: string, entityType: string, entityId: string, summary: string, before?: unknown, after?: unknown) => void };
 export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: string, { fail, audit }: Helpers) {
@@ -126,6 +126,7 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
       if (a.before !== undefined && JSON.stringify(a.before) !== JSON.stringify(sec.rows)) fail("白天分配已被修改，请保留输入并载入最新数据", 409);
       const rows = a.rows as WeeklyServerRow[];
       if (new Set(rows.map(x => x.resourceId)).size !== rows.length || rows.some(x => !plan.resourceIds!.includes(x.resourceId))) fail("服务器范围不正确");
+      for (const row of rows) for (const assignment of row.assignments ?? []) if (!sec.rows.find(x => x.resourceId === row.resourceId)?.assignments.some(x => x.groupId === assignment.groupId)) (sec.restorations ??= []).push({ resourceId: row.resourceId, groupId: assignment.groupId, ...workspaceRange(plan) });
       sec.rows = rows.map(row => ({ resourceId: row.resourceId, specialNote: text(row.specialNote ?? "", "特殊用途", false, 2000), assignments: ids(row.assignments?.map(x => x.groupId), "使用组").map(groupId => {
         if (!s.groups.some(g => g.id === groupId)) fail("使用组不存在");
         return { groupId, purpose: text(row.assignments.find(x => x.groupId === groupId)?.purpose ?? "", "使用用途", false) };
@@ -151,6 +152,7 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
       }
       sec.allocations = sec.allocations.filter(x => x.demandId !== d!.id || !slots.includes(x.slotId));
       sec.allocations.push(...slots.map(slotId => ({ demandId: d!.id, slotId, resourceIds: resourceIds.slice(), locked: a.locked === true })));
+      for (const id of resourceIds) for (const slotId of slots) { const slot = w.slots.find(x => x.id === slotId)!; (sec.restorations ??= []).push({ resourceId: id, groupId: d!.groupId, startAt: slot.startAt, endAt: slot.endAt }); }
       touch(); break;
     }
     case "weekly.v2.recommend": {
@@ -182,6 +184,11 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
         const errors = sectionIssues(s, plan, other, { ...w.sections[other], ...published }, now); w.slots = savedSlots;
         if (errors.length) fail(`另一流程已发布结果需先协调：${errors[0]}`, 409);
       }
+      for (const restoration of sec.restorations ?? []) {
+        const active = part === "day" ? sec.rows.some(row => row.resourceId === restoration.resourceId && row.assignments.some(x => x.groupId === restoration.groupId)) : sec.allocations.some(a => a.resourceIds.includes(restoration.resourceId) && sec.demands.find(d => d.id === a.demandId)?.groupId === restoration.groupId && w.slots.some(x => x.id === a.slotId && x.startAt === restoration.startAt && x.endAt === restoration.endAt));
+        if (active) w.suppressions = w.suppressions.flatMap(x => x.resourceId !== restoration.resourceId || (x.groupId && x.groupId !== restoration.groupId) ? [x] : subtractRanges(x, [restoration]).map(range => ({ ...x, ...range })));
+      }
+      sec.restorations = [];
       sec.published = { demands: structuredClone(sec.demands), allocations: structuredClone(sec.allocations), rows: structuredClone(sec.rows), slots: structuredClone(w.slots), publishedAt: now };
       sec.status = "published"; plan.status = "published"; plan.publishedAt = now; plan.updatedAt = now;
       if (part === "day") { plan.rows = structuredClone(sec.rows); for (const row of sec.rows) if (row.assignments.length > 1) { const r = s.resources.find(x => x.id === row.resourceId)!; r.sharingMode = "shared"; r.updatedAt = now; } }
