@@ -212,6 +212,7 @@ export type WorkspaceSection = {
   rows: WeeklyServerRow[]; confirmations: WeeklyPlan["confirmations"]; published?: WorkspaceSnapshot;
 };
 export type WeeklyWorkspace = {
+  setup?: { completedAt: string; by: string };
   version: 2; startAt: string; slots: WeeklySlot[]; participantGroupIds: string[];
   priorityNote: string; previousRows: WeeklyServerRow[];
   sections: Record<WeeklySectionName, WorkspaceSection>;

@@ -17,7 +17,8 @@ const act = (s: State, type: string, data: Record<string, unknown> = {}, part: W
 function setup(n = 6) {
   let s = emptyState();
   s.resources = Array.from({ length: n }, (_, i) => ({ id: `r${i}`, name: `A5-${i}`, ip: `192.0.2.${i + 1}`, type: "A5八卡", zone: "blue" as const, family: "A5" as const, rack: `柜${Math.floor(i / 4) + 1}`, accessMode: "bare" as const, location: "测试", sharingMode: "exclusive" as const, status: "available" as const, note: "", deleted: false, createdAt: now, updatedAt: now }));
-  s = act(s, "create", { weekStart: week, groupIds: ["g1", "g2"] }); return s;
+  s = act(s, "create", { weekStart: week, groupIds: ["g1", "g2"] });
+  return act(s, "settings", { completeSetup: true }, "day");
 }
 function demand(s: State, extras: Partial<WorkspaceDemand> = {}, part: WeeklySectionName = "multi", actor = admin) {
   return act(s, "demand", { demand: { groupId: "g1", title: "训练", desired: 2, negotiated: 2, slotIds: ["0-晚上"], continuous: false, sameRackCount: 0, shareCount: 0, model: "qwen", requirements: "", ...extras } }, part, actor);
@@ -195,4 +196,40 @@ test("cleared machines can be explicitly reassigned, only taking effect on the t
   s = publish(s, "multi");
   const slot = plan(s).v2!.slots[0], current = s.bookings.filter(b => b.status === "scheduled" && b.resourceId === "r0");
   assert.equal(current.length, 1); assert.equal(current[0].startAt, slot.startAt); assert.equal(current[0].endAt, slot.endAt);
+});
+
+test("guided setup gates new plans, validates permissions, and leaves existing configured workflows compatible", () => {
+  let s = setup(); delete plan(s).v2!.setup;
+  assert.doesNotThrow(() => demand(s));
+  plan(s).v2!.setup = { completedAt: "", by: "" };
+  assert.throws(() => demand(s), /先完成参与范围/);
+  assert.throws(() => act(s, "recommend"), /先完成参与范围/);
+  assert.throws(() => act(s, "settings", { completeSetup: true }, "day", contact), /管理员/);
+  s = act(s, "settings", { completeSetup: true, saturdayEnabled: true }, "day");
+  assert.equal(plan(s).v2!.setup!.completedAt, now);
+  assert.ok(plan(s).v2!.slots.filter(x => x.saturdayDay).every(x => x.enabled));
+  assert.doesNotThrow(() => demand(s));
+});
+
+test("inline day edits preserve purposes and expose all changed rows atomically", () => {
+  let s = dayPlan();
+  const before = structuredClone(sec(s, "day").rows), rows = structuredClone(before);
+  rows[0].assignments = [{ groupId: "g2", purpose: "管理员直接修改的用途" }]; rows[0].specialNote = "完整多行\n特殊用途说明";
+  s = act(s, "rows", { rows, before }, "day");
+  assert.equal(sec(s, "day").rows[0].assignments[0].purpose, "管理员直接修改的用途");
+  assert.equal(sec(s, "day").rows[0].specialNote, rows[0].specialNote);
+  assert.throws(() => act(s, "rows", { rows: before, before }, "day"), /已被修改/);
+});
+
+test("multi sheet saves swaps atomically and checks continuous batches, conflicts and stale inputs", () => {
+  let s = demand(demand(setup(), { title: "连续一", desired: 1, negotiated: 1, continuous: true, slotIds: ["0-晚上", "0-凌晨"] }), { title: "连续二", groupId: "g2", desired: 1, negotiated: 1, continuous: true, slotIds: ["0-晚上", "0-凌晨"] });
+  s = act(s, "recommend"); const before = structuredClone(sec(s).allocations), d1 = sec(s).demands[0].id, d2 = sec(s).demands[1].id;
+  const allocations = before.map(a => ({ ...a, resourceIds: [a.demandId === d1 ? "r3" : "r2"], locked: true }));
+  s = act(s, "multiSheet", { before, allocations }); assert.deepEqual(sec(s).allocations, allocations);
+  assert.throws(() => act(s, "multiSheet", { before, allocations }), /其他人修改/);
+  const bad = allocations.map(a => ({ ...a, resourceIds: ["r0"] }));
+  assert.throws(() => act(s, "multiSheet", { before: allocations, allocations: bad }), /一个任务/);
+  const split = allocations.map(a => ({ ...a, resourceIds: a.demandId === d2 && a.slotId === "0-凌晨" ? ["r4"] : a.resourceIds }));
+  assert.throws(() => act(s, "multiSheet", { before: allocations, allocations: split }), /同一批/);
+  assert.throws(() => act(s, "multiSheet", { before: allocations, allocations }, "multi", contact), /管理员/);
 });

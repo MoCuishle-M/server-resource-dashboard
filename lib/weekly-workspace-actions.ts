@@ -2,7 +2,7 @@ import type { Action, Actor, State, WeeklyPlan, WeeklySectionName, WeeklyServerR
 import { calendarRange, shiftDate } from "./schedule";
 import { inheritedTableRows } from "./weekly-table";
 import { PLATFORM_GROUP_ID } from "./lingshu";
-import { blueA5, makeWeeklySlots, recommendSection, rebuildWorkspaceBookings, resourceUnavailable, sectionGroups, sectionIssues, subtractRanges, workspaceRange } from "./weekly-workspace";
+import { blueA5, linkDayRows, makeWeeklySlots, recommendSection, rebuildWorkspaceBookings, resourceUnavailable, sectionGroups, sectionIssues, subtractRanges, workspaceConfigured, workspaceRange } from "./weekly-workspace";
 
 type Helpers = { fail: (message: string, status?: number) => never; audit: (kind: string, entityType: string, entityId: string, summary: string, before?: unknown, after?: unknown) => void };
 export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: string, { fail, audit }: Helpers) {
@@ -28,7 +28,7 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
     const rows: WeeklyServerRow[] = pool.map(id => ({ resourceId: id, assignments: (inherited.find(r => r.resourceId === id)?.assignments ?? []).map(x => ({ groupId: x.groupId, purpose: x.purpose })), specialNote: inherited.find(r => r.resourceId === id)?.specialNote ?? "" }));
     const participantGroupIds = groups(a.groupIds ?? previous?.v2?.participantGroupIds ?? s.groups.filter(g => g.id !== PLATFORM_GROUP_ID).map(g => g.id));
     const p: WeeklyPlan = { id: crypto.randomUUID(), weekStart: week, endAt, layout: "table", resourceIds: pool, rows: structuredClone(rows), status: "collecting", allocations: [], deferred: [], confirmations: [], createdAt: now, updatedAt: now, publishedAt: "",
-      v2: { version: 2, startAt, slots: makeWeeklySlots(week), participantGroupIds, priorityNote: "deepseek、qwen、glm、kimi 系列模型优先；具体数量由会议协商。", previousRows: structuredClone(rows), suppressions: [], sections: { day: { ...fresh(), rows }, multi: fresh() } } };
+      v2: { version: 2, setup: { completedAt: "", by: "" }, startAt, slots: makeWeeklySlots(week), participantGroupIds, priorityNote: "deepseek、qwen、glm、kimi 系列模型优先；具体数量由会议协商。", previousRows: structuredClone(rows), suppressions: [], sections: { day: { ...fresh(), rows }, multi: fresh() } } };
     s.weeklyPlans.push(p); audit("创建双流程周计划", "weekly", p.id, `${week}周，${pool.length}台蓝区A5`, null, p); return;
   }
   const p = s.weeklyPlans.find(p => p.id === a.planId);
@@ -39,6 +39,7 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
   const part = a.section as WeeklySectionName;
   if (part !== "day" && part !== "multi") fail("请选择白天或多机流程");
   let sec = w.sections[part];
+  if (!workspaceConfigured(plan) && a.type !== "weekly.v2.settings") fail("请管理员先完成参与范围与规则制定，再开放需求收集", 409);
   const touch = () => { sec.confirmations = []; if (sec.status !== "collecting") sec.status = "draft"; plan.updatedAt = now; };
   const editing = () => { if (sec.status === "published") fail("请先重新编排该流程", 409); };
   switch (a.type) {
@@ -49,7 +50,7 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
         const pool = checkPool(a.resourceIds);
         if (w.sections.day.published || w.sections.multi.published) fail("已有发布结果，资源池在本周保持不变；请在新周调整", 409);
         const used = [...w.sections.day.rows.filter(r => r.assignments.length).map(r => r.resourceId), ...Object.values(w.sections).flatMap(x => x.allocations.flatMap(a => a.resourceIds))];
-        if (used.some(id => !pool.includes(id))) fail("请先移除待退出服务器的草稿分配", 409);
+        if (workspaceConfigured(plan) && used.some(id => !pool.includes(id))) fail("请先移除待退出服务器的草稿分配", 409);
         plan.resourceIds = pool;
         w.sections.day.rows = pool.map(id => w.sections.day.rows.find(r => r.resourceId === id) ?? { resourceId: id, assignments: [], specialNote: "" });
       }
@@ -60,11 +61,14 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
       }
       if (a.priorityNote !== undefined) w.priorityNote = text(a.priorityNote, "优先级说明", false, 2000);
       if (a.saturdayEnabled !== undefined) {
-        if (part !== "multi" || typeof a.saturdayEnabled !== "boolean") fail("周六开关应在多机流程设置");
-        const affected = sec.demands.filter(d => d.slotIds.some(id => w.slots.some(x => x.id === id && x.saturdayDay)));
+        if (typeof a.saturdayEnabled !== "boolean") fail("周六开关格式不正确");
+        const affected = w.sections.multi.demands.filter(d => d.slotIds.some(id => w.slots.some(x => x.id === id && x.saturdayDay)));
         if (!a.saturdayEnabled && affected.length) fail(`请先调整周六白天任务：${affected.map(d => d.title).join("、")}`, 409);
         for (const slot of w.slots) if (slot.saturdayDay) slot.enabled = a.saturdayEnabled as boolean;
       }
+      if (a.completeSetup === true) w.setup = { completedAt: now, by: actor.displayName };
+      const globalChange = a.resourceIds !== undefined || a.groupIds !== undefined || a.priorityNote !== undefined || a.saturdayEnabled !== undefined;
+      if (globalChange) for (const section of Object.values(w.sections)) if (section !== sec && section.status !== "published") { section.confirmations = []; if (section.status === "confirming") section.status = "draft"; }
       touch(); break;
     }
     case "weekly.v2.reopen": needAdmin(); sec.status = "collecting"; touch(); break;
@@ -132,9 +136,32 @@ export function applyWorkspaceAction(s: State, actor: Actor, a: Action, now: str
         return { groupId, purpose: text(row.assignments.find(x => x.groupId === groupId)?.purpose ?? "", "使用用途", false) };
       }) }));
       // Resolve group rows against quantities without counting one physical server twice within a group.
-      sec.allocations = []; const used = new Set<string>();
-      for (const d of sec.demands) { const chosen = sec.rows.filter(row => row.assignments.some(x => x.groupId === d.groupId) && !used.has(`${d.groupId}/${row.resourceId}`)).slice(0, d.negotiated ?? 0); for (const row of chosen) { used.add(`${d.groupId}/${row.resourceId}`); const x = row.assignments.find(x => x.groupId === d.groupId)!; x.demandId = d.id; x.purpose = d.title; } sec.allocations.push({ demandId: d.id, slotId: "day", resourceIds: chosen.map(x => x.resourceId), locked: false }); }
+      sec = w.sections.day = linkDayRows(sec, sec.rows);
       touch(); break;
+    }
+    case "weekly.v2.multiSheet": {
+      needAdmin(); editing(); if (part !== "multi") fail("请选择多机流程");
+      if (JSON.stringify(a.before) !== JSON.stringify(sec.allocations)) fail("多机分配已被其他人修改，输入已保留，请核对最新数据", 409);
+      if (!Array.isArray(a.allocations) || a.allocations.length > 3600) fail("分配表格式不正确");
+      const keys = new Set<string>(), occupied = new Set<string>(), previous = sec.allocations;
+      const allocations = (a.allocations as WorkspaceAllocation[]).map(a => {
+        const d = sec.demands.find(d => d.id === a.demandId), slot = w.slots.find(x => x.id === a.slotId);
+        if (!d || !slot?.enabled || !d.slotIds.includes(a.slotId)) fail("分配任务或时段不正确");
+        const key = `${a.demandId}/${a.slotId}`; if (keys.has(key)) fail("同一任务时段重复"); keys.add(key);
+        const resourceIds = ids(a.resourceIds);
+        for (const id of resourceIds) {
+          const r = s.resources.find(r => r.id === id);
+          if (!plan.resourceIds?.includes(id) || !r || resourceUnavailable(s, plan, r, slot!, now)) fail("分配包含不在资源池或不可用的服务器", 409);
+          if (occupied.has(`${a.slotId}/${id}`)) fail("同一时段服务器只能分配给一个任务", 409); occupied.add(`${a.slotId}/${id}`);
+          if (!previous.some(old => old.demandId === a.demandId && old.slotId === a.slotId && old.resourceIds.includes(id))) (sec.restorations ??= []).push({ resourceId: id, groupId: d!.groupId, startAt: slot!.startAt, endAt: slot!.endAt });
+        }
+        return { demandId: d!.id, slotId: slot!.id, resourceIds, locked: a.locked === true };
+      });
+      for (const d of sec.demands.filter(d => d.continuous)) {
+        const batches = d.slotIds.map(slotId => [...(allocations.find(a => a.demandId === d.id && a.slotId === slotId)?.resourceIds ?? [])].sort().join(","));
+        if (new Set(batches).size > 1) fail(`${d.title}：连续任务必须使用同一批服务器`, 409);
+      }
+      sec.allocations = allocations; touch(); break;
     }
     case "weekly.v2.assign": {
       needAdmin(); editing(); const d = sec.demands.find(x => x.id === a.demandId); if (!d) fail("需求不存在");

@@ -3,6 +3,17 @@ import { shiftDate, weeklyPlanRange } from "./schedule";
 import { overlappingTimeBlocks } from "./resource-time-blocks";
 
 export const workspaceRange = (p: WeeklyPlan) => ({ startAt: p.v2!.startAt, endAt: weeklyPlanRange(p).endAt });
+// Plans created before guided setup retain their already-established workflow.
+export const workspaceConfigured = (p: WeeklyPlan) => p.v2?.setup === undefined || !!p.v2.setup.completedAt;
+export function linkDayRows(sec: WorkspaceSection, input: typeof sec.rows): WorkspaceSection {
+  const rows = structuredClone(input), allocations: WorkspaceAllocation[] = [], used = new Set<string>();
+  for (const d of sec.demands) {
+    const chosen = rows.filter(row => row.assignments.some(x => x.groupId === d.groupId) && !used.has(`${d.groupId}/${row.resourceId}`)).slice(0, d.negotiated ?? 0);
+    for (const row of chosen) { used.add(`${d.groupId}/${row.resourceId}`); const x = row.assignments.find(x => x.groupId === d.groupId)!; x.demandId = d.id; }
+    allocations.push({ demandId: d.id, slotId: "day", resourceIds: chosen.map(x => x.resourceId), locked: false });
+  }
+  return { ...sec, rows, allocations };
+}
 export const overlaps = (a: { startAt: string; endAt: string }, b: { startAt: string; endAt: string }) => a.startAt < b.endAt && b.startAt < a.endAt;
 export const blueA5 = (r: Resource) => !r.deleted && !r.hidden && r.zone === "blue" && r.family === "A5" && r.accessMode === "bare";
 export const chinaStamp = (v: string) => new Date(Date.parse(v) + 28800000).toISOString().slice(0, 16).replace("T", " ");

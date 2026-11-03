@@ -21,9 +21,15 @@ try {
   await action({ type: "weekly.v2.create", weekStart: monday, resourceIds, groupIds: ["g1", "g2"] });
   const planId = state.weeklyPlans.find(p => p.weekStart === monday).id;
   const run = (type, data = {}, section = "multi", expected = 200) => action({ type: `weekly.v2.${type}`, planId, section, ...data }, expected);
+  await run("recommend", {}, "day", 409);
+  await run("settings", { completeSetup: true }, "day");
   const plan = () => state.weeklyPlans.find(p => p.id === planId), sec = (part = "multi") => plan().v2.sections[part];
   for (const groupId of ["g1", "g2"]) await run("demand", { demand: { groupId, title: `${groupId}白天API`, desired: 1, negotiated: 1 } }, "day");
   await run("recommend", {}, "day");
+  const dayBefore = structuredClone(sec("day").rows), dayRows = structuredClone(dayBefore);
+  dayRows.find(r => r.assignments.length).assignments[0].purpose = "API在线表格修改用途";
+  await run("rows", { rows: dayRows, before: dayBefore }, "day");
+  assert.ok(sec("day").rows.some(r => r.assignments.some(a => a.purpose === "API在线表格修改用途")));
   async function publish(section, groups) {
     await run("stage", { status: "confirming" }, section);
     for (const groupId of groups) await run("confirm", { groupId, status: "confirmed", note: "本地测试确认" }, section);
@@ -33,7 +39,11 @@ try {
   const publishedDay = JSON.stringify(sec("day").published);
   await run("reopen", {}, "day"); await run("demand", { demand: { groupId: "g1", title: "未发布草稿API", desired: 1, negotiated: 1 } }, "day");
   await run("demand", { demand: { groupId: "g1", title: "连续多机API", desired: 5, negotiated: 4, slotIds: ["0-晚上", "0-凌晨"], continuous: true } });
-  await run("recommend"); await publish("multi", ["g1"]);
+  await run("recommend");
+  const multiBefore = structuredClone(sec().allocations), multiRows = multiBefore.map(a => ({ ...a, locked: true }));
+  await run("multiSheet", { before: multiBefore, allocations: multiRows });
+  await run("multiSheet", { before: multiBefore, allocations: multiRows }, "multi", 409);
+  await publish("multi", ["g1"]);
   assert.equal(JSON.stringify(sec("day").published), publishedDay); assert.equal(sec("day").status, "collecting");
   const persisted = await (await client.get(base + "/api/state")).json(); assert.deepEqual(persisted.weeklyPlans.find(p => p.id === planId), plan());
   const publicState = await (await visitor.get(base + "/api/state")).json();

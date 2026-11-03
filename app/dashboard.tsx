@@ -81,6 +81,8 @@ import RequestAssignmentForm from "./request-assignment-form";
 import RequestPriorityForm from "./request-priority-form";
 import RequestExtensionForm from "./request-extension-form";
 import WeeklyPlanning from "./weekly-workspace";
+import WeeklyAllocation from "./weekly-allocation";
+import type { WeeklySectionName } from "@/lib/types";
 import { extensionResourceIds } from "@/lib/request-extension";
 import { activeDialog, FeedbackContext, OperationFeedback, type OperationNotice } from "./operation-feedback";
 import { copyRequestDraft } from "@/lib/request-draft";
@@ -106,6 +108,7 @@ type View =
   | "resources"
   | "schedule"
   | "weekly"
+  | "allocation"
   | "requests"
   | "groups"
   | "history"
@@ -115,6 +118,7 @@ const nav = [
   { id: "resources", label: "服务器资源", icon: Server },
   { id: "schedule", label: "使用排期", icon: CalendarDays },
   { id: "weekly", label: "每周需求与排期", icon: ClipboardList },
+  { id: "allocation", label: "服务器分配", icon: Database },
   { id: "requests", label: "申请与审批", icon: ClipboardList },
   { id: "groups", label: "团队与接口人", icon: Users },
   { id: "history", label: "变更历史", icon: History },
@@ -130,6 +134,7 @@ const titles: Record<View, { title: string; sub: string }> = {
   overview: { title: "资源总览", sub: "让每一份算力，都有清晰的去向。" },
   resources: { title: "服务器资源", sub: "统一管理服务器清单与访问方式。" },
   weekly: { title: "每周需求与排期", sub: "A5 双流程周计划 · 白天周分配与多机时段分配。" },
+  allocation: { title: "服务器分配", sub: "A5 在线分配表 · 点击单元格调整服务器归属。" },
   schedule: {
     title: "使用排期",
     sub: "按时间查看资源分配，协调每个团队的计划。",
@@ -278,6 +283,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     [toast, setToast] = useState<OperationNotice | null>(null);
   const s = stored && demo ? { ...serializePublic(stored, stored.actor, stored.now, stored.adminConfigured), demo: true } : stored;
   const [weeklyDirty, setWeeklyDirty] = useState(false);
+  const [weeklyContext, setWeeklyContext] = useState<{ planId?: string; section: WeeklySectionName }>({ section: "day" });
   const [search, setSearch] = useState(""),
     [typeFilter, setTypeFilter] = useState<string[] | null>(null),
     [modeFilter, setModeFilter] = useState(""),
@@ -460,7 +466,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const visitor = actor.role === "visitor";
   const visibleNav = nav.filter(n => visitor
     ? n.id === "overview" || n.id === "schedule"
-    : (n.id !== "settings" || admin) && (n.id !== "weekly" || admin || actor.role === "contact"));
+    : (n.id !== "settings" || admin) && (!["weekly", "allocation"].includes(n.id) || admin || actor.role === "contact"));
   const view = visibleNav.some(n => n.id === selectedView) ? selectedView : "overview";
   useEffect(() => {
     if (!loading && selectedView !== view) setView(view);
@@ -1045,7 +1051,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
           </div>
         </div>
         <main>
-          <div className="page-heading">
+          <div className={`page-heading${view === "allocation" ? " compact-allocation-heading" : ""}`}>
             <div>
               <div className="eyebrow">SERVER RESOURCE MANAGEMENT</div>
               <h1>
@@ -1061,7 +1067,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                 {chinaDate()}
                 <span>UTC+8</span>
               </span>
-              {canApply && <button className="button primary" onClick={() => openRequest()}>
+              {canApply && !["weekly", "allocation"].includes(view) && <button className="button primary" onClick={() => openRequest()}>
                 <Plus size={17} />
                 申请资源
               </button>}
@@ -1098,7 +1104,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   {admin && <button className="text-button" onClick={() => navigate("settings")}>编辑公告与签名</button>}
                 </section>}
                 {view === "settings" && admin && <AdminSettings state={s} busy={busy} onAction={run} />}
-                {view === "weekly" && <WeeklyPlanning state={s} busy={busy} onAction={run} onDirty={setWeeklyDirty} />}
+                {view === "weekly" && <WeeklyPlanning state={s} busy={busy} onAction={run} onDirty={setWeeklyDirty} {...weeklyContext} onSelect={(planId, section) => setWeeklyContext({ planId, section })} onOpenAllocation={(planId, section) => { setWeeklyContext({ planId, section }); navigate("allocation"); }} />}
+                {view === "allocation" && <WeeklyAllocation state={s} busy={busy} onAction={run} onDirty={setWeeklyDirty} {...weeklyContext} onSelect={(planId, section) => setWeeklyContext({ planId, section })} onBack={(planId, section) => { setWeeklyContext({ planId, section }); navigate("weekly"); }} />}
                 {view === "overview" && (
                   <>
                     <section className="kpi-grid">
