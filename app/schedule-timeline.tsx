@@ -1,7 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Popover } from "radix-ui";
-import { ChevronLeft, ChevronRight, Plus, Search, Server, SlidersHorizontal, ListFilter } from "lucide-react";
+import { useState } from "react";
+import { CalendarClock, ChevronLeft, ChevronRight, Plus, Search, Server, ListFilter } from "lucide-react";
 import { chinaDate, resourceSharingMode } from "@/lib/domain";
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import { resourceSearch } from "@/lib/resource-search";
@@ -18,14 +17,30 @@ const fullTime = (iso: string) => new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit",
   hour: "2-digit", minute: "2-digit", hour12: false,
 }).format(new Date(iso));
-const resourceFields = [
-  ["family", "类型"], ["zone", "区域"], ["ip", "IP"], ["name", "服务器名称"],
-  ["type", "硬件规格"], ["access", "使用方式"], ["sharing", "共享方式"],
-  ["rack", "机柜"], ["location", "位置"], ["note", "备注"], ["status", "资源状态"],
-] as const;
-type ResourceField = typeof resourceFields[number][0];
-const defaultFields: ResourceField[] = ["family", "zone", "ip"];
-const fieldStorageKey = "schedule-resource-fields-v1";
+
+function rackKey(r: Resource) {
+  const rack = r.rack?.trim();
+  // A cabinet number can be reused in another room, and an empty value does not identify a cabinet.
+  return rack ? JSON.stringify([r.family, r.zone, r.location.trim(), rack]) : JSON.stringify([r.id]);
+}
+
+function groupByRack<T>(items: T[], getResource: (item: T) => Resource) {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const key = rackKey(getResource(item));
+    const group = groups.get(key);
+    if (group) group.push(item);
+    else groups.set(key, [item]);
+  }
+  return groups;
+}
+
+function resourceGroupLabel(r: Resource) {
+  const zone = r.zone === "green" ? "绿区" : r.zone === "blue" ? "蓝区" : "未登记区域";
+  const rack = r.rack?.trim();
+  const cabinet = rack?.match(/^(?:计算柜|机柜|柜)?\s*(\d+)\s*柜?$/)?.[1];
+  return `${r.family || "未登记类型"} ${r.family === "A5" && rack ? `${zone}${cabinet ? cabinet + "柜" : " " + rack}` : zone}`;
+}
 
 export default function ScheduleTimeline({ resources, bookings, groups, weeklyPlans = [], now, onDetail, onRequest, onPriority, onTimeBlock }: {
   resources: Resource[];
@@ -45,20 +60,6 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
   const [group, setGroup] = useState("");
   const [family, setFamily] = useState("");
   const [zone, setZone] = useState("");
-  const [fields, setFields] = useState<ResourceField[]>(defaultFields);
-  useEffect(() => {
-    try {
-      const stored = JSON.parse(localStorage.getItem(fieldStorageKey) ?? "null");
-      if (Array.isArray(stored)) {
-        const valid = resourceFields.map(([key]) => key).filter(key => stored.includes(key));
-        if (valid.length) setFields(valid);
-      }
-    } catch { /* Storage may be unavailable in private browsing. */ }
-  }, []);
-  function updateFields(next: ResourceField[]) {
-    setFields(next);
-    try { localStorage.setItem(fieldStorageKey, JSON.stringify(next)); } catch { /* Keep the current view usable. */ }
-  }
   const [applied, setApplied] = useState(() => calendarRange(chinaDate(), "week"));
   const [start, setStart] = useState(() => localInput(applied.startAt));
   const [end, setEnd] = useState(() => localInput(applied.endAt));
@@ -73,18 +74,13 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
     && (!family || (r.family || "unset") === family) && (!zone || (r.zone || "unset") === zone))
     .map(resource => ({ resource, notes: scheduleNotes(weeklyPlans, resource.id, range), blocks: layoutTimeBlocks(resource.timeBlocks ?? [], range), layout: layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range) }))
     .filter(row => !group || row.layout.bars.length > 0);
-  const pagination = useListPagination(resourceRows, "schedule-page-size-v1",
+  const byRack = groupByRack(resourceRows, row => row.resource);
+  const allRacks = groupByRack(resources, resource => resource);
+  const pagination = useListPagination([...byRack.values()].flat(), "schedule-page-size-v1",
     JSON.stringify([search, types, group, family, zone, range.startAt, range.endAt]));
-  const fieldValue = (r: Resource, field: ResourceField) => {
-    switch (field) {
-      case "family": return r.family || "未登记类型";
-      case "zone": return r.zone === "green" ? "绿区" : r.zone === "blue" ? "蓝区" : "未登记区域";
-      case "access": return r.accessMode === "bare" ? "裸机" : "灵枢平台";
-      case "sharing": return resourceSharingMode(r) === "shared" ? "共享" : "独占";
-      case "status": return resourceStatusLabels[r.status];
-      default: return r[field] || "未登记";
-    }
-  };
+  const pageRacks = groupByRack(pagination.rows, row => row.resource);
+  const showTimeBlock = !!onTimeBlock && range.endAt > now;
+  const showActions = !!onRequest || showTimeBlock;
   const currentPercent = (Date.parse(now) - Date.parse(range.startAt)) / span * 100;
   function switchMode(next: typeof mode) {
     if (next === "range" && mode !== "range") {
@@ -136,13 +132,6 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
       </select>
       <ResourceTypeFilter types={resourceTypes} selected={types} onChange={setTypes} label="排期类型筛选" allLabel="全部硬件规格" />
       <div className="search"><Search size={16} /><textarea aria-label="搜索排期资源" aria-describedby="schedule-search-help" placeholder="输入 IP，支持多个 IP" rows={1} value={search} onChange={e => setSearch(e.target.value)} /></div>
-      <Popover.Root><Popover.Trigger asChild><button className="button"><SlidersHorizontal size={14} />显示信息</button></Popover.Trigger>
-        <Popover.Portal><Popover.Content className="schedule-options-popup" align="end" sideOffset={7} collisionPadding={12} aria-label="排期显示信息">
-          <h3>服务器显示信息</h3><p>至少保留一项，选择会在此浏览器中记住。</p>
-          <div className="schedule-field-options">{resourceFields.map(([key, label]) => <label key={key}><input type="checkbox" checked={fields.includes(key)} disabled={fields.length === 1 && fields.includes(key)} onChange={e => updateFields(e.target.checked ? resourceFields.map(([id]) => id).filter(id => id === key || fields.includes(id)) : fields.filter(id => id !== key))} />{label}</label>)}</div>
-          <button className="text-button" onClick={() => updateFields(defaultFields)}>恢复默认</button>
-        </Popover.Content></Popover.Portal>
-      </Popover.Root>
       <span className="muted text-small">{resourceRows.length} / {resources.length} 台</span>
       {(search || family || zone || group || types !== null) && <button className="text-button" onClick={() => { setSearch(""); setFamily(""); setZone(""); setGroup(""); setTypes(null); }}>清除筛选</button>}
     </div>
@@ -150,8 +139,8 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
     <ListPagination pagination={pagination} label="资源时间线" />
     <div className="table-scroll schedule-scroll" tabIndex={0} aria-label="连续时间排期表，可横向滚动">
       <table className="schedule-table" aria-label="服务器连续时间排期">
-        <colgroup><col className="schedule-server-col" /><col /></colgroup>
-        <thead><tr><th scope="col">{resourceFields.filter(([key]) => fields.includes(key)).map(([, label]) => label).join(" · ")}</th><th scope="col" className="timeline-header">
+        <colgroup><col className="schedule-group-col" /><col className="schedule-ip-col" />{showActions && <col className="schedule-actions-col" />}<col /></colgroup>
+        <thead><tr><th scope="col" className="schedule-group-cell">类型·区域·机柜</th><th scope="col" className="schedule-ip-cell">IP</th>{showActions && <th scope="col" className="schedule-actions-cell">操作</th>}<th scope="col" className="timeline-header">
           <div className="timeline-axis" aria-label="连续时间刻度">
             {ticks.map((tick, i) => <span key={tick.at} className={`timeline-tick ${i === ticks.length - 1 ? "last" : ""}`} style={{ left: `${tick.percent}%` }}>
               <strong>{new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit" }).format(new Date(tick.at))}</strong>
@@ -161,12 +150,17 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
             </span>)}
           </div>
         </th></tr></thead>
-        <tbody>{pagination.rows.map(({ resource: r, layout, notes, blocks }) => <tr key={r.id}>
-          <td className="schedule-server">
-            <div className="schedule-resource-line"><button className="schedule-resource-info" aria-label={`查看服务器 ${r.ip} 详情`} onClick={() => onDetail(r)}>{fields.map(field => <span key={field} className={`schedule-field schedule-field-${field}`} title={`${resourceFields.find(([key]) => key === field)![1]}：${fieldValue(r, field)}`}>{fieldValue(r, field)}</span>)}</button>
-            {onRequest && <button className="icon-button schedule-apply" aria-label="申请" title={r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请此服务器"} disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={14} /></button>}</div>
-            {onTimeBlock && range.endAt > now && <button className="text-button" aria-label={`标记时段 ${r.ip}`} onClick={() => onTimeBlock(r, { startAt: range.startAt < now ? now : range.startAt, endAt: range.endAt })}>标记时段</button>}
+        {[...pageRacks].map(([key, rows]) => {
+          const merged = rows.length > 1 && rows.length === allRacks.get(key)?.length;
+          return <tbody key={key}>{rows.map(({ resource: r, layout, notes, blocks }, i) => <tr key={r.id}>
+          {(!merged || i === 0) && <th className="schedule-group-cell" scope={merged ? "rowgroup" : "row"} rowSpan={merged ? rows.length : undefined}>{resourceGroupLabel(r)}</th>}
+          <td className="schedule-ip-cell">
+            <button className="schedule-resource-info" aria-label={`查看服务器 ${r.ip} 详情`} onClick={() => onDetail(r)}>{r.ip}</button>
           </td>
+          {showActions && <td className="schedule-actions-cell"><div className="schedule-row-actions">
+            {onRequest && <button className="icon-button schedule-apply" aria-label="申请" title={r.status !== "available" ? resourceStatusLabels[r.status] : range.endAt <= now ? "历史排期" : "申请此服务器"} disabled={r.status !== "available" || range.endAt <= now} onClick={() => onRequest([r.id], range)}><Plus size={15} /></button>}
+            {showTimeBlock && <button className="icon-button schedule-apply" title="标记时段" aria-label={`标记时段 ${r.ip}`} onClick={() => onTimeBlock(r, { startAt: range.startAt < now ? now : range.startAt, endAt: range.endAt })}><CalendarClock size={15} /></button>}
+          </div></td>}
           <td className="timeline-cell"><div className="timeline-track" style={{ height: `calc(${layout.lanes + (blocks.bars.length ? blocks.lanes : 0)} * var(--timeline-lane-height) + 12px)` }}>
             {ticks.map(tick => <i key={tick.at} className="timeline-gridline" style={{ left: `${tick.percent}%` }} aria-hidden="true" />)}
             {currentPercent >= 0 && currentPercent < 100 && <i className="timeline-now" style={{ left: `${currentPercent}%` }} title="当前时间" aria-hidden="true" />}
@@ -195,7 +189,8 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
             {notes.map(({ weekStart, note }) => <div key={weekStart}><strong>特殊用途{notes.length > 1 ? `（${weekStart}周）` : ""}</strong><span>{note}</span></div>)}
           </div>}
           </td>
-        </tr>)}</tbody>
+        </tr>)}</tbody>;
+        })}
       </table>
       {!resourceRows.length && <div className="empty"><Server size={28} /><h3>{resources.length ? "没有符合条件的排期资源" : "添加资源后即可查看排期"}</h3></div>}
     </div>
