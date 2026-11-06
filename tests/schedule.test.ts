@@ -5,7 +5,7 @@ import type { Booking } from "../lib/types";
 import { bookingAvailability, displayBookings, requestPriorityPreview } from "../lib/priority";
 import type { Resource } from "../lib/types";
 import type { WeeklyPlan } from "../lib/types";
-import { scheduleNotes } from "../lib/schedule-notes";
+import { scheduleNoteDisplay, scheduleNotes } from "../lib/schedule-notes";
 
 test("special-purpose notes follow published weeks, excluding drafts and adjacent weeks", () => {
   const plan = (weekStart: string, note: string, status: WeeklyPlan["status"] = "published"): WeeklyPlan => ({ id: weekStart, weekStart, layout: "table", status, rows: [{ resourceId: "r1", assignments: [], specialNote: note }], allocations: [], deferred: [], confirmations: [], createdAt: "", updatedAt: "", publishedAt: "" });
@@ -14,6 +14,16 @@ test("special-purpose notes follow published weeks, excluding drafts and adjacen
   assert.deepEqual(scheduleNotes(plans, "other", calendarRange("2026-10-26", "week")), []);
   assert.deepEqual(scheduleNotes(plans, "r1", calendarRange("2026-11-02", "week")), []);
   assert.equal(scheduleNotes(plans, "r1", customRange("2026-10-20T00:00", "2026-11-10T00:00")).length, 3);
+});
+
+test("the schedule grid hides Canada notes and moves smoke to the IP without hiding other notes", () => {
+  const weekStart = "2026-11-02";
+  const original = { weekStart, note: "23:00 ~ 第二天9:00\r\n加研同事使用空闲卡\r\n不占卡、不动已有进程与容器\r\n冒烟\r\n保留此备注" };
+  assert.deepEqual(scheduleNoteDisplay([original, { weekStart, note: "加拿大研究所仅使用空闲卡" }]), {
+    smoke: ["冒烟"],
+    other: [{ weekStart, note: "保留此备注" }],
+  });
+  assert.match(original.note, /加研同事/);
 });
 
 const booking = (id: string, startAt: string, endAt: string, status: Booking["status"] = "scheduled") => ({ id, startAt, endAt, status, priority: "normal" } as Booking);

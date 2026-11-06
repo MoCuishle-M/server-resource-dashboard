@@ -2,15 +2,15 @@ import { chromium } from "playwright";
 import assert from "node:assert/strict";
 const base = process.env.BASE_URL ?? "http://127.0.0.1:5173";
 const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
-const browser = await chromium.launch({ headless: true, channel: "chromium", args: ["--no-sandbox"],
+const browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL ?? "chromium", args: ["--no-sandbox"],
   ...(proxy && !/^http:\/\/(127\.0\.0\.1|localhost)/.test(base) ? { proxy: { server: proxy } } : {}),
 });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1050 } });
-  await page.clock.setFixedTime(new Date("2026-10-21T02:00:00Z"));
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
   await page.goto(base + "/demo", { waitUntil: "networkidle" });
+  await page.clock.setFixedTime(new Date("2026-10-21T02:00:00Z"));
   await page.getByRole("button", { name: "申请与审批", exact: true }).click();
   const resource = "Atlas-910B-02"; // Existing exclusive server, no demo bookings on the next day.
   async function request(purpose, start, end, group) {
@@ -71,9 +71,13 @@ try {
   await page.getByLabel("演示角色").selectOption("visitor");
   assert.equal(await page.getByRole("button", { name: "取消部分时段", exact: true }).count(), 0);
   await page.getByRole("button", { name: "使用排期", exact: true }).click();
+  await page.getByLabel("排期日期").fill("2026-10-22");
   await page.getByLabel("搜索排期资源").fill(resource);
-  assert.equal(await page.locator(".timeline-booking").filter({ hasText: "QA原独占9–19" }).count(), 2);
-  assert.equal(await page.locator(".timeline-booking").filter({ hasText: "QA空档独占任务" }).count(), 1);
+  const original = page.locator('.schedule-usage-name[title*="QA原独占9–19"]');
+  assert.equal(await original.count(), 1);
+  assert.equal((await original.getAttribute("title")).match(/QA原独占9–19/g).length, 2);
+  assert.equal(await page.locator('.schedule-usage-name[title*="QA空档独占任务"]').count(), 1);
+  await page.getByLabel("演示角色").selectOption("admin");
   await page.getByRole("button", { name: "变更历史", exact: true }).click();
   assert.match(await page.locator("main").innerText(), /取消部分时段/);
   assert.match(await page.locator("main").innerText(), /QA临时任务需要独占12–14点/);

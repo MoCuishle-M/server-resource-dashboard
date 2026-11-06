@@ -13,7 +13,7 @@ try {
   await page.goto(base + "/demo", { waitUntil: "networkidle" });
   await page.waitForFunction(() => document.querySelector('[aria-label="演示角色"]')?.value === "admin");
   await page.clock.setFixedTime(new Date("2026-10-21T02:00:00Z"));
-  async function approve(purpose, start, end, group) {
+  async function approve(purpose, start, end, group, priority = "high") {
     await page.getByRole("button", { name: "申请资源", exact: true }).click();
     let d = page.getByRole("dialog");
     await d.getByText("Atlas-910B-01", { exact: true }).click();
@@ -21,6 +21,7 @@ try {
     await d.getByLabel("开始时间 *", { exact: true }).fill(start);
     await d.getByLabel("结束时间 *", { exact: true }).fill(end);
     await d.getByLabel("任务用途").fill(purpose);
+    await d.getByLabel("任务优先级", { exact: true }).selectOption(priority);
     await d.getByRole("button", { name: "提交申请", exact: true }).click();
     await d.waitFor({ state: "hidden" });
     const row = page.getByRole("row").filter({ hasText: purpose });
@@ -32,8 +33,14 @@ try {
   const longPurpose = "QA连续跨夜 · " + "多组共享服务器使用说明".repeat(6);
   await approve(longPurpose, "2026-10-23T21:30", "2026-10-24T06:45", "g1");
   await approve("QA跨周共享", "2026-10-24T00:15", "2026-10-26T03:00", "g2");
-  await approve("VLLM组常态占用", "2026-10-22T00:00", "2026-11-01T00:00", "g1");
+  await approve("VLLM组长时预约", "2026-10-22T00:00", "2026-11-01T00:00", "g1");
+  await approve("QA常态一", "2026-10-22T00:00", "2026-11-01T00:00", "g1", "normal");
+  await approve("QA常态二", "2026-10-22T00:00", "2026-11-01T00:00", "g2", "normal");
   await page.getByRole("button", { name: "使用排期", exact: true }).click();
+  assert.equal(await page.getByRole("button", { name: "单日", exact: true }).getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator(".schedule-range-label").getAttribute("data-start"), "2026-10-20T16:00:00.000Z");
+  assert.equal(await page.locator(".schedule-range-label").getAttribute("data-end"), "2026-10-21T16:00:00.000Z");
+  await page.getByRole("button", { name: "一周", exact: true }).click();
   const moreFilters = page.getByRole("button", { name: /^更多筛选/ });
   async function showMoreFilters() {
     if (!await page.getByLabel("排期组筛选").isVisible()) await moreFilters.click();
@@ -50,6 +57,7 @@ try {
   assert.equal(await groupCells.first().innerText(), "A3 绿区");
   assert.equal(await groupCells.first().getAttribute("rowspan"), "8");
   assert.equal(await scheduleRows.first().locator(".schedule-ip-cell").innerText(), "192.0.2.11");
+  assert.equal(await scheduleRows.first().locator(".schedule-resource-info").evaluate(el => getComputedStyle(el).fontWeight), "700");
   assert.equal(await scheduleRows.nth(1).locator(".schedule-group-cell").count(), 0);
   assert.equal(await scheduleRows.nth(1).locator(".schedule-ip-cell").innerText(), "192.0.2.12");
   const mark = scheduleRows.nth(1).getByRole("button", { name: "标记时段 192.0.2.12" });
@@ -123,7 +131,7 @@ try {
   const shared = page.locator(".timeline-booking").filter({ hasText: "QA跨周共享" });
   assert.equal(await overnight.count(), 1);
   assert.equal(await shared.count(), 1);
-  const persistent = page.locator(".timeline-booking").filter({ hasText: "VLLM组常态占用" });
+  const persistent = page.locator(".timeline-booking").filter({ hasText: "VLLM组长时预约" });
   async function assertPurposeReadable(bar, fullText = false) {
     const box = await bar.evaluate(e => {
       const purpose = e.querySelector(".timeline-summary");
@@ -144,7 +152,7 @@ try {
     for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++)
       assert(boxes[i].y + boxes[i].height <= boxes[j].y || boxes[j].y + boxes[j].height <= boxes[i].y, "shared lane text overlaps");
     assert((await overnight.getAttribute("title")).includes(longPurpose), "full reason missing from tooltip");
-    assert.match(await persistent.locator(".timeline-summary").innerText(), / · VLLM组常态占用/);
+    assert.match(await persistent.locator(".timeline-summary").innerText(), / · VLLM组长时预约/);
     assert.equal(await page.locator(".timeline-caption").count(), 0);
   }
   await page.screenshot({ path: "outputs/schedule-readable-text-desktop.png", fullPage: true });
@@ -163,6 +171,12 @@ try {
   await page.getByRole("button", { name: "本周", exact: true }).click();
   await page.getByRole("button", { name: "单日", exact: true }).click();
   await page.getByLabel("排期日期", { exact: true }).fill("2026-10-24");
+  assert.equal(await page.getByRole("columnheader", { name: "使用组", exact: true }).count(), 1);
+  const regular = scheduleRows.first().locator(".schedule-usage-name");
+  assert.deepEqual((await regular.allTextContents()).sort(), ["多模态算法组", "大模型预训练组"]);
+  assert((await regular.nth(0).boundingBox()).y < (await regular.nth(1).boundingBox()).y);
+  assert.equal(await page.locator(".timeline-booking.priority-normal").count(), 0);
+  assert.match(await regular.getByText("大模型预训练组").getAttribute("title"), /QA常态一/);
   assert.equal(await label.getAttribute("data-start"), "2026-10-23T16:00:00.000Z");
   assert.equal(await label.getAttribute("data-end"), "2026-10-24T16:00:00.000Z");
   a = await position(overnight);

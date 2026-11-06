@@ -29,7 +29,12 @@ try {
   await page.getByRole("button", { name: "单日", exact: true }).click();
   await page.getByLabel("排期日期").fill(date); await page.getByLabel("搜索排期资源").fill("192.0.2.11");
   const bar = purpose => page.locator(".timeline-booking").filter({ hasText: purpose });
-  await bar("QA手调重点一").click();
+  const regular = purpose => page.locator(`.schedule-usage-name[title*="${purpose}"]`);
+  async function adjustRegular(purpose) {
+    await regular(purpose).click();
+    await page.getByRole("dialog").locator(".booking-list > div").filter({ hasText: purpose }).getByRole("button", { name: "调整优先级", exact: true }).click();
+  }
+  await adjustRegular("QA手调重点一");
   let d = page.getByRole("dialog", { name: "调整排期优先级", exact: true });
   assert(await d.getByRole("button", { name: "保存优先级", exact: true }).isDisabled());
   await d.getByLabel("调整后的优先级").selectOption("high");
@@ -40,8 +45,8 @@ try {
   await page.screenshot({ path: "outputs/priority-adjustment/desktop-form.png", fullPage: true });
   await d.getByRole("button", { name: "保存优先级", exact: true }).click(); await d.waitFor({ state: "hidden" });
   assert.match(await bar("QA手调重点一").getAttribute("class"), /priority-high/);
-  assert.match(await bar("QA手调重点二").innerText(), /暂不可用/);
-  await bar("QA手调重点二").click();
+  assert.match(await regular("QA手调重点二").getAttribute("title"), /暂不可用/);
+  await adjustRegular("QA手调重点二");
   d = page.getByRole("dialog", { name: "调整排期优先级", exact: true });
   await d.getByLabel("调整后的优先级").selectOption("high");
   assert.match(await d.getByRole("region", { name: "优先级调整影响预览" }).innerText(), /同级共享.*QA手调重点一/s);
@@ -50,7 +55,7 @@ try {
   await d.getByRole("button", { name: "保存优先级", exact: true }).click(); await d.waitFor({ state: "hidden" });
   assert.match(await bar("QA手调重点一").getAttribute("title"), /同级共享 · 可用/);
   assert.match(await bar("QA手调重点二").getAttribute("title"), /同级共享 · 可用/);
-  assert.match(await bar("QA基础低优排期").getAttribute("title"), /部分时段被抢占/);
+  assert.match(await regular("QA基础低优排期").getAttribute("title"), /部分时段被抢占/);
   await page.screenshot({ path: "outputs/priority-adjustment/two-high-timeline.png", fullPage: true });
   await bar("QA手调重点二").click();
   d = page.getByRole("dialog", { name: "调整排期优先级", exact: true });

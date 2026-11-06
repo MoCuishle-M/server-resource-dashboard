@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 const base = process.env.BASE_URL ?? 'http://127.0.0.1:5173';
 const proxy = process.env.HTTPS_PROXY ?? process.env.https_proxy;
-const browser = await chromium.launch({ headless: true, channel: 'chromium', args: ['--no-sandbox'],
+const browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL ?? 'chromium', args: ['--no-sandbox'],
   ...(proxy && !/^http:\/\/(127\.0\.0\.1|localhost)/.test(base) ? { proxy: { server: proxy } } : {}) });
 const tomorrow = new Date(Date.now() + 32 * 3600000).toISOString().slice(0, 10);
 try {
@@ -73,9 +73,9 @@ try {
   await page.getByLabel('排期日期', { exact: true }).fill(tomorrow);
   await page.getByLabel('搜索排期资源').fill('192.0.2.21 192.0.2.22 192.0.2.23');
   for (const purpose of ['QA统一预留3台', 'QA多模态训练', 'QA推理测试最终事项'])
-    assert.equal(await page.locator('.timeline-booking').filter({ hasText: purpose }).count(), 1);
+    assert.equal(await page.locator(`.schedule-usage-name[title*="${purpose}"]`).count(), 1);
   // Resource detail starts an adjustment with just the clicked machine selected.
-  await page.locator('.timeline-booking').filter({ hasText: 'QA多模态训练' }).click();
+  await page.locator('.schedule-usage-name[title*="QA多模态训练"]').click();
   d = page.getByRole('dialog');
   await d.getByRole('button', { name: '调整组与事项', exact: true }).click();
   d = page.getByRole('dialog');

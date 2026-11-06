@@ -74,10 +74,10 @@ try {
   await d.waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "使用排期", exact: true }).click();
   await page.getByLabel("排期日期").fill(tomorrow);
-  await page.getByRole("button", { name: /^更多筛选/ }).click();
+  if (!await page.getByLabel("排期组筛选").isVisible()) await page.getByRole("button", { name: /^更多筛选/ }).click();
   await page.getByLabel("排期组筛选").selectOption({ label: "灵枢平台" });
   await page.keyboard.press("Escape");
-  const booking = page.locator(".timeline-booking").filter({ hasText: "QA灵枢平台排期" });
+  const booking = page.locator('.schedule-usage-name[title*="QA灵枢平台排期"]');
   assert.equal(await booking.count(), 1);
   assert((await booking.innerText()).includes("灵枢平台"));
   await page.getByRole("button", { name: "团队与接口人", exact: true }).click();

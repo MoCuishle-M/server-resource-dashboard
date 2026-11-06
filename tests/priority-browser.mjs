@@ -44,21 +44,22 @@ try {
   await page.getByRole("button", { name: "单日", exact: true }).click();
   await page.getByLabel("排期日期").fill(date);
   await page.getByLabel("搜索排期资源").fill("192.0.2.11");
-  const low = page.locator(".timeline-booking").filter({ hasText: "QA蓝框普通任务" });
+  const low = page.locator('.schedule-usage-name[title*="QA蓝框普通任务"]');
   const high = page.locator(".timeline-booking").filter({ hasText: "QA红框任务一" });
   const peer = page.locator(".timeline-booking").filter({ hasText: "QA红框任务二" });
-  assert.match(await low.innerText(), /部分时段被抢占/);
+  assert.match(await low.getAttribute("title"), /部分时段被抢占/);
+  assert.equal(await page.locator(".timeline-booking.priority-normal").count(), 0);
   assert.equal(await page.locator(".timeline-blocked-overlay").count(), 0);
   const lowBox = await low.boundingBox(), highBox = await high.boundingBox(), peerBox = await peer.boundingBox();
   const firstHigh = highBox.y < peerBox.y ? high : peer;
-  assert.equal(lowBox.y, Math.min(highBox.y, peerBox.y), "the ordinary and high layers start on the same line");
+  assert(lowBox.x + lowBox.width < Math.min(highBox.x, peerBox.x), "ordinary usage stays in the left column");
   assert(Math.abs(highBox.y - peerBox.y) >= highBox.height, "overlapping same-priority bars have separate lines");
   assert(await firstHigh.evaluate(el => {
     const box = el.getBoundingClientRect();
     return el.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
   }), "the high-priority bar is on top and receives clicks in the overlap");
   assert.match(await high.getAttribute("title"), /同级共享 · 可用/);
-  assert.match(await page.locator(".timeline-booking").filter({ hasText: "QA低优候补排期" }).innerText(), /已排期 · 暂不可用/);
+  assert.match(await page.locator('.schedule-usage-name[title*="QA低优候补排期"]').getAttribute("title"), /已排期 · 暂不可用/);
   await page.screenshot({ path: "outputs/priority/timeline.png", fullPage: true });
   async function filterGroup(value) {
     const group = page.getByLabel("排期组筛选");
