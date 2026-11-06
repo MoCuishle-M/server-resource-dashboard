@@ -50,7 +50,7 @@ try {
   await d.getByRole("button", { name: "保存优先级", exact: true }).click(); await d.waitFor({ state: "hidden" });
   assert.match(await bar("QA手调重点一").getAttribute("title"), /同级共享 · 可用/);
   assert.match(await bar("QA手调重点二").getAttribute("title"), /同级共享 · 可用/);
-  assert.equal(await bar("QA基础低优排期").locator(".timeline-blocked-overlay").count(), 1);
+  assert.match(await bar("QA基础低优排期").getAttribute("title"), /部分时段被抢占/);
   await page.screenshot({ path: "outputs/priority-adjustment/two-high-timeline.png", fullPage: true });
   await bar("QA手调重点二").click();
   d = page.getByRole("dialog", { name: "调整排期优先级", exact: true });

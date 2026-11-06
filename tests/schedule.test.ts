@@ -16,7 +16,7 @@ test("special-purpose notes follow published weeks, excluding drafts and adjacen
   assert.equal(scheduleNotes(plans, "r1", customRange("2026-10-20T00:00", "2026-11-10T00:00")).length, 3);
 });
 
-const booking = (id: string, startAt: string, endAt: string, status: Booking["status"] = "scheduled") => ({ id, startAt, endAt, status } as Booking);
+const booking = (id: string, startAt: string, endAt: string, status: Booking["status"] = "scheduled") => ({ id, startAt, endAt, status, priority: "normal" } as Booking);
 
 test("Beijing weeks run Monday midnight to the following Monday across year and month boundaries", () => {
   assert.deepEqual(calendarRange("2026-10-21", "week"), {
@@ -84,6 +84,20 @@ test("overlapping shared bookings get separate lanes, adjacent bookings reuse a 
   assert.equal(layout.lanes, 3);
   assert.deepEqual(layout.bars.map(b => [b.booking.id, b.lane]), [["a", 0], ["preempted:gap0", 1], ["b", 2], ["c", 0]]);
   assert.equal(layout.bars[0].width, 12.5);
+});
+
+test("priority layers share lanes and only simultaneous peers add height", () => {
+  const at = (h: number) => `2026-10-21T${String(h).padStart(2, "0")}:00:00.000Z`;
+  const layout = layoutBookings([
+    booking("baseline", at(1), at(15)),
+    { ...booking("high", at(4), at(8)), priority: "high" },
+    { ...booking("high-peer", at(6), at(9)), priority: "high" },
+    { ...booking("urgent", at(6), at(7)), priority: "urgent" },
+    { ...booking("adjacent", at(9), at(11)), priority: "high" },
+  ], { startAt: at(0), endAt: at(12) });
+  assert.equal(layout.lanes, 2);
+  assert.deepEqual(Object.fromEntries(layout.bars.map(bar => [bar.booking.id, bar.lane])),
+    { baseline: 0, high: 0, "high-peer": 1, urgent: 0, adjacent: 0 });
 });
 
 test("priority preview splits partial overlaps and distinguishes shared peers and exclusive conflicts", () => {

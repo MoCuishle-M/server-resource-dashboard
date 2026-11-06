@@ -45,21 +45,34 @@ try {
   await page.getByLabel("排期日期").fill(date);
   await page.getByLabel("搜索排期资源").fill("192.0.2.11");
   const low = page.locator(".timeline-booking").filter({ hasText: "QA蓝框普通任务" });
+  const high = page.locator(".timeline-booking").filter({ hasText: "QA红框任务一" });
+  const peer = page.locator(".timeline-booking").filter({ hasText: "QA红框任务二" });
   assert.match(await low.innerText(), /部分时段被抢占/);
-  assert.equal(await low.locator(".timeline-blocked-overlay").count(), 1);
-  assert.match(await page.locator(".timeline-booking").filter({ hasText: "QA红框任务一" }).getAttribute("title"), /同级共享 · 可用/);
+  assert.equal(await page.locator(".timeline-blocked-overlay").count(), 0);
+  const lowBox = await low.boundingBox(), highBox = await high.boundingBox(), peerBox = await peer.boundingBox();
+  const firstHigh = highBox.y < peerBox.y ? high : peer;
+  assert.equal(lowBox.y, Math.min(highBox.y, peerBox.y), "the ordinary and high layers start on the same line");
+  assert(Math.abs(highBox.y - peerBox.y) >= highBox.height, "overlapping same-priority bars have separate lines");
+  assert(await firstHigh.evaluate(el => {
+    const box = el.getBoundingClientRect();
+    return el.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+  }), "the high-priority bar is on top and receives clicks in the overlap");
+  assert.match(await high.getAttribute("title"), /同级共享 · 可用/);
   assert.match(await page.locator(".timeline-booking").filter({ hasText: "QA低优候补排期" }).innerText(), /已排期 · 暂不可用/);
   await page.screenshot({ path: "outputs/priority/timeline.png", fullPage: true });
-  await page.getByRole("button", { name: /^更多筛选/ }).click();
-  await page.getByLabel("排期组筛选").selectOption("g1");
-  await page.keyboard.press("Escape");
-  assert.equal(await low.locator(".timeline-blocked-overlay").count(), 1);
+  async function filterGroup(value) {
+    const group = page.getByLabel("排期组筛选");
+    if (!await group.isVisible()) await page.getByRole("button", { name: /^更多筛选/ }).click();
+    await group.selectOption(value);
+    await page.keyboard.press("Escape");
+  }
+  await filterGroup("g1");
+  assert.match(await low.getAttribute("title"), /部分时段被抢占/);
+  assert.equal(await high.count(), 0);
   await page.locator(".schedule-resource-info").click();
   assert.match(await page.getByRole("dialog").innerText(), /部分时段被抢占|暂不可用/);
   await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).first().click();
-  await page.getByRole("button", { name: /^更多筛选/ }).click();
-  await page.getByLabel("排期组筛选").selectOption("");
-  await page.keyboard.press("Escape");
+  await filterGroup("");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: "outputs/priority/mobile.png", fullPage: true });
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));

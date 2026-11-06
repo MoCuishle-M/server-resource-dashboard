@@ -1,5 +1,5 @@
 import type { Booking, ResourceTimeBlock, WeeklyPlan } from "./types";
-import { displayBookings } from "./priority";
+import { displayBookings, priorityRank } from "./priority";
 
 export type TimelineRange = { startAt: string; endAt: string };
 const hour = 3600000;
@@ -49,30 +49,38 @@ export function timelineTicks(range: TimelineRange) {
 }
 
 export function layoutBookings(bookings: Booking[], range: TimelineRange) {
-  return layoutRanges(displayBookings(bookings), range);
+  return layoutRanges(displayBookings(bookings), range, booking => priorityRank[booking.priority]);
 }
 
 export function layoutTimeBlocks(blocks: ResourceTimeBlock[], range: TimelineRange) {
   return layoutRanges(blocks.filter(b => b.status === "active").map(b => ({ ...b, startAt: b.displayStartAt ?? b.startAt })), range);
 }
 
-function layoutRanges<T extends { id: string; startAt: string; endAt: string }>(items: T[], range: TimelineRange) {
+function layoutRanges<T extends { id: string; startAt: string; endAt: string }>(
+  items: T[], range: TimelineRange, layerOf: (item: T) => number = () => 0,
+) {
   const start = Date.parse(range.startAt), end = Date.parse(range.endAt);
   const visible = items.filter(b =>
     Date.parse(b.startAt) < end && Date.parse(b.endAt) > start,
   ).sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt) ||
     Date.parse(a.endAt) - Date.parse(b.endAt) || a.id.localeCompare(b.id));
-  const laneEnds: number[] = [];
+  // Pack each priority independently so different layers reuse the same vertical space.
+  const layers = new Map<number, number[]>();
+  let lanes = 1;
   const bars = visible.map(booking => {
     const clippedStart = Math.max(start, Date.parse(booking.startAt));
     const clippedEnd = Math.min(end, Date.parse(booking.endAt));
+    const layer = layerOf(booking);
+    const laneEnds = layers.get(layer) ?? [];
+    layers.set(layer, laneEnds);
     let lane = laneEnds.findIndex(t => t <= clippedStart);
     if (lane < 0) lane = laneEnds.length;
     laneEnds[lane] = clippedEnd;
+    lanes = Math.max(lanes, laneEnds.length);
     return { booking, lane, left: (clippedStart - start) / (end - start) * 100,
       width: (clippedEnd - clippedStart) / (end - start) * 100,
       continuesBefore: Date.parse(booking.startAt) < start,
       continuesAfter: Date.parse(booking.endAt) > end };
   });
-  return { bars, lanes: Math.max(1, laneEnds.length) };
+  return { bars, lanes };
 }
