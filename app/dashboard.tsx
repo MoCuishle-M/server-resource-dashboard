@@ -276,7 +276,7 @@ function Modal({
 }
 export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const [stored, setS] = useState<PublicState | null>(null),
-    [selectedView, setView] = useState<View>("overview"),
+    [selectedView, setView] = useState<View | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
@@ -467,7 +467,8 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const visibleNav = nav.filter(n => visitor
     ? n.id === "overview" || n.id === "schedule"
     : (n.id !== "settings" || admin) && (!["weekly", "allocation"].includes(n.id) || admin || actor.role === "contact"));
-  const view = visibleNav.some(n => n.id === selectedView) ? selectedView : "overview";
+  const defaultView = visitor ? "schedule" : "overview";
+  const view = selectedView && visibleNav.some(n => n.id === selectedView) ? selectedView : defaultView;
   useEffect(() => {
     if (!loading && selectedView !== view) setView(view);
   }, [loading, selectedView, view]);
@@ -1395,6 +1396,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     resources={resources}
                     bookings={s.bookings}
                     groups={s.groups}
+                    rememberGroup={visitor}
                     weeklyPlans={s.weeklyPlans}
                     now={clock}
                     onDetail={setDetail}

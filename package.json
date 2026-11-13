@@ -18,6 +18,7 @@
     "test:api": "node tests/native-api.mjs",
     "test:sharing": "node tests/sharing-browser.mjs",
     "test:schedule": "node tests/schedule-browser.mjs",
+    "test:visitor-schedule": "node tests/visitor-schedule-browser.mjs",
     "test:partial-cancel": "node tests/partial-cancel-browser.mjs",
     "test:partial-cancel-api": "node tests/partial-cancel-api.mjs",
     "test:visibility": "node tests/visibility-browser.mjs",
