@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CalendarClock, ChevronLeft, ChevronRight, Plus, Search, Server, ListFilter } from "lucide-react";
 import { chinaDate, resourceSharingMode } from "@/lib/domain";
 import { resourceStatusLabels } from "@/lib/resource-policy";
@@ -18,6 +18,7 @@ const fullTime = (iso: string) => new Intl.DateTimeFormat("zh-CN", {
   hour: "2-digit", minute: "2-digit", hour12: false,
 }).format(new Date(iso));
 const groupOrder = new Intl.Collator("zh-CN", { numeric: true });
+const groupStorageKey = "visitor-schedule-group-v1";
 
 function rackKey(r: Resource) {
   const rack = r.rack?.trim();
@@ -43,10 +44,11 @@ function resourceGroupLabel(r: Resource) {
   return `${r.family || "未登记类型"} ${r.family === "A5" && rack ? `${zone}${cabinet ? cabinet + "柜" : " " + rack}` : zone}`;
 }
 
-export default function ScheduleTimeline({ resources, bookings, groups, weeklyPlans = [], now, onDetail, onRequest, onPriority, onTimeBlock }: {
+export default function ScheduleTimeline({ resources, bookings, groups, rememberGroup = false, weeklyPlans = [], now, onDetail, onRequest, onPriority, onTimeBlock }: {
   resources: Resource[];
   bookings: Booking[];
   groups: Group[];
+  rememberGroup?: boolean;
   weeklyPlans?: WeeklyPlan[];
   now: string;
   onDetail: (resource: Resource) => void;
@@ -58,7 +60,22 @@ export default function ScheduleTimeline({ resources, bookings, groups, weeklyPl
   const [date, setDate] = useState(() => chinaDate());
   const [search, setSearch] = useState("");
   const [types, setTypes] = useState<string[] | null>(null);
-  const [group, setGroup] = useState("");
+  const [selectedGroup, setSelectedGroup] = useState("");
+  const group = groups.some(g => g.id === selectedGroup) ? selectedGroup : "";
+  useEffect(() => {
+    setSelectedGroup("");
+    if (!rememberGroup) return;
+    try { setSelectedGroup(localStorage.getItem(groupStorageKey) ?? ""); }
+    catch { /* Filtering still works when browser storage is unavailable. */ }
+  }, [rememberGroup]);
+  function setGroup(value: string) {
+    setSelectedGroup(value);
+    if (!rememberGroup) return;
+    try {
+      if (value) localStorage.setItem(groupStorageKey, value);
+      else localStorage.removeItem(groupStorageKey);
+    } catch { /* Keep the selection for this page when storage is unavailable. */ }
+  }
   const [family, setFamily] = useState("");
   const [zone, setZone] = useState("");
   const [applied, setApplied] = useState(() => calendarRange(date, "day"));
