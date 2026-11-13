@@ -96,6 +96,11 @@ export function analyzeUsage(
 ) {
   const resources = new Map(state.resources.map(resource => [resource.id, resource]));
   const dayData = new Map(days.map(day => [`${day.resourceId}/${day.day}`, day]));
+  const hosts = new Map<string, { expected: number; snapshot: NpuSnapshot | null }>();
+  for (const day of days) {
+    hosts.set(day.resourceId, { expected: Math.max(hosts.get(day.resourceId)?.expected ?? 0, day.expected), snapshot: null });
+  }
+  for (const host of latest) hosts.set(host.resourceId, host);
   const groups = new Map(state.groups.map(group => [group.id, { id: group.id, name: group.name, ...totals() }]));
   const machineRows = [];
   const fleet = totals();
@@ -106,8 +111,8 @@ export function analyzeUsage(
   const groupTrend = selectedGroup ? buckets.map(totals) : [];
   let machineTrend: Totals[] = [];
 
-  for (const host of latest) {
-    const resource = resources.get(host.resourceId);
+  for (const [resourceId, host] of hosts) {
+    const resource = resources.get(resourceId);
     if (!resource) continue;
     const machine = totals();
     const spans = effectiveSpans(state, resource, range);

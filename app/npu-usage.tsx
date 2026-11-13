@@ -244,11 +244,13 @@ export default function NpuUsage({ state, demo }: { state: State; demo: boolean 
         {selected && <div className="npu-detail">
           <h3>{selected.name} · 选定时段</h3>
           <UsageTrend key={selected.id} data={data} values={data.machineTrend} />
-          <h3>最新卡状态 · {time(selected.snapshot.at)}</h3>
-          <div className="npu-cards">{selected.snapshot.cards.map(card => <div key={card.key}>
-            <strong>卡 {card.key}</strong><span>{states[card.state] ?? card.state}</span>
-            <small>计算 {percent(card.util)} · HBM {percent(card.hbm)}</small>
-          </div>)}</div>
+          {selected.snapshot ? <>
+            <h3>最新卡状态 · {time(selected.snapshot.at)}</h3>
+            <div className="npu-cards">{selected.snapshot.cards.map(card => <div key={card.key}>
+              <strong>卡 {card.key}</strong><span>{states[card.state] ?? card.state}</span>
+              <small>计算 {percent(card.util)} · HBM {percent(card.hbm)}</small>
+            </div>)}</div>
+          </> : <p className="npu-empty">尚未上报卡状态快照，历史使用率仍正常统计。</p>}
         </div>}
       </section>
       <section className="npu-panel">

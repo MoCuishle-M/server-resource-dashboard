@@ -59,6 +59,61 @@ test("a shared booking stops during upgrade and preserves valid history before r
   assert.equal(analysis.groups[0].occupied, 3);
 });
 
+test("day-only and snapshot-only machines remain visible without double counting machines with both", () => {
+  const second = { ...resource, id: "r2" };
+  const third = { ...resource, id: "r3" };
+  const result = analyzeUsage({ resources: [resource, second, third], groups, bookings: [] }, [
+    { resourceId: resource.id, day, expected: 8, samples: { 540: [8, 4, 8, 240] } },
+    { resourceId: second.id, day, expected: 4, samples: { 540: [4, 2, 4, 120] } },
+  ], [
+    { resourceId: second.id, expected: 4, snapshot: { at: now, cards: [] } },
+    { resourceId: third.id, expected: 8, snapshot: { at: now, cards: [] } },
+  ], usageRange(day, day, now), "", resource.id);
+  assert.equal(result.machines.length, 3);
+  assert.equal(result.machines.find(row => row.id === resource.id)?.snapshot, null);
+  assert.equal(result.fleet.observed, 12);
+  assert.equal(result.fleet.occupied, 6);
+  assert.equal(result.fleet.expected, 20 * 600);
+  assert.equal(result.machineTrend[36].observed, 8);
+});
+
+test("D1 minute-only uploads appear in machine and group analysis; non-blue resources are rejected without writes", async () => {
+  const mf = new Miniflare({
+    modules: true, script: 'export default {fetch(){return new Response("ok")}}',
+    compatibilityDate: "2026-05-15", d1Databases: ["DB"],
+  });
+  try {
+    const db = await mf.getD1Database("DB") as unknown as D1Database;
+    const sql = await Promise.all((await readdir("drizzle")).filter(name => name.endsWith(".sql")).sort()
+      .map(name => readFile(`drizzle/${name}`, "utf8")));
+    await db.batch(sql.flatMap(text => text.split("--> statement-breakpoint")).filter(x => x.trim()).map(x => db.prepare(x)));
+    const hosts = [resource, { ...resource, id: "green", ip: "192.0.2.2", zone: "green" },
+      { ...resource, id: "unknown", ip: "192.0.2.3", zone: undefined }];
+    await db.batch(hosts.map(host => db.prepare("INSERT INTO resources (id, payload) VALUES (?, ?)")
+      .bind(host.id, JSON.stringify(host))));
+    const sample = { day, ip: resource.ip, expected: 8, points: [[540, 8, 4, 8, 240]] };
+    await saveUsage(db, sample, now);
+    for (const host of hosts.slice(1)) {
+      await assert.rejects(saveUsage(db, { ...sample, ip: host.ip }, now), /匹配蓝区资源/);
+    }
+    const { emptyState } = await import("../lib/domain");
+    const result = await readUsage(db, { ...emptyState(), resources: [resource], groups, bookings: [booking("a", "a", 540, 541)] },
+      new URL(`https://test.invalid/?start=${day}&end=${day}&group=a&machine=${resource.id}`), now);
+    assert.equal(result.machines.length, 1);
+    assert.equal(result.machines[0].snapshot, null);
+    assert.equal(result.fleet.observed, 8);
+    assert.equal(result.fleet.occupied, 4);
+    assert.equal(result.groups[0].expected, 8);
+    assert.equal(result.groups[0].observed, 8);
+    assert.equal(result.groupTrend[36].occupied, 4);
+    assert.equal(result.machineTrend[36].observed, 8);
+    assert.equal((await db.prepare("SELECT count(*) AS count FROM npu_days").first<{ count: number }>())?.count, 1);
+    assert.equal((await db.prepare("SELECT count(*) AS count FROM npu_latest").first<{ count: number }>())?.count, 0);
+  } finally {
+    await mf.dispose();
+  }
+});
+
 test("D1 ingest authenticates, merges repeat uploads and keeps the newest snapshot", async () => {
   const secret = "test-token-for-local-d1-integration";
   await assert.rejects(authorizeCollector(new Request("https://test.invalid"), secret), /认证失败/);
@@ -85,7 +140,7 @@ test("D1 ingest authenticates, merges repeat uploads and keeps the newest snapsh
       new URL(`https://test.invalid/?start=${day}&end=${day}`), now);
     assert.equal(result.groups[0].observed, 16);
     assert.equal(result.groups[0].occupied, 4);
-    assert.equal(result.machines[0].snapshot.at, sample.snapshot.at);
+    assert.equal(result.machines[0].snapshot?.at, sample.snapshot.at);
   } finally {
     await mf.dispose();
   }

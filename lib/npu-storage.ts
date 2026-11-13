@@ -86,7 +86,7 @@ export async function saveUsage(db: D1Database, input: unknown, now: number) {
   const { results } = await db.prepare("SELECT payload FROM resources").all<{ payload: string }>();
   const matches = results.map(row => JSON.parse(row.payload) as Resource)
     .filter(resource => !resource.deleted && resource.ip.trim() === body.ip.trim());
-  if (matches.length !== 1 || matches[0].zone === "green") {
+  if (matches.length !== 1 || matches[0].zone !== "blue") {
     throw new DomainError(409, "采集 IP 无法唯一匹配蓝区资源");
   }
   const resourceId = matches[0].id;
