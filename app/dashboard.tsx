@@ -62,6 +62,7 @@ import {
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
+import NpuUsage from "./npu-usage";
 import ResourceTimeBlockForm, { ResourceTimeBlockList } from "./resource-time-block-form";
 import { currentTimeBlock, timeBlockTitle } from "@/lib/resource-time-blocks";
 import type { ResourceTimeBlock } from "@/lib/types";
@@ -107,6 +108,7 @@ type View =
   | "overview"
   | "resources"
   | "schedule"
+  | "npu-usage"
   | "weekly"
   | "allocation"
   | "requests"
@@ -117,6 +119,7 @@ const nav = [
   { id: "overview", label: "资源总览", icon: LayoutDashboard },
   { id: "resources", label: "服务器资源", icon: Server },
   { id: "schedule", label: "使用排期", icon: CalendarDays },
+  { id: "npu-usage", label: "NPU 使用分析", icon: Activity },
   { id: "weekly", label: "每周需求与排期", icon: ClipboardList },
   { id: "allocation", label: "服务器分配", icon: Database },
   { id: "requests", label: "申请与审批", icon: ClipboardList },
@@ -133,6 +136,7 @@ const resourceCategories = [
 const titles: Record<View, { title: string; sub: string }> = {
   overview: { title: "资源总览", sub: "让每一份算力，都有清晰的去向。" },
   resources: { title: "服务器资源", sub: "统一管理服务器清单与访问方式。" },
+  "npu-usage": { title: "NPU 使用分析", sub: "按机器或团队查看实际卡占用率与计算利用率。" },
   weekly: { title: "每周需求与排期", sub: "A5 双流程周计划 · 白天周分配与多机时段分配。" },
   allocation: { title: "服务器分配", sub: "A5 在线分配表 · 点击单元格调整服务器归属。" },
   schedule: {
@@ -466,7 +470,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const visitor = actor.role === "visitor";
   const visibleNav = nav.filter(n => visitor
     ? n.id === "overview" || n.id === "schedule"
-    : (n.id !== "settings" || admin) && (!["weekly", "allocation"].includes(n.id) || admin || actor.role === "contact"));
+    : (!["settings", "npu-usage"].includes(n.id) || admin) && (!["weekly", "allocation"].includes(n.id) || admin || actor.role === "contact"));
   const defaultView = visitor ? "schedule" : "overview";
   const view = selectedView && visibleNav.some(n => n.id === selectedView) ? selectedView : defaultView;
   useEffect(() => {
@@ -1105,6 +1109,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   {admin && <button className="text-button" onClick={() => navigate("settings")}>编辑公告与签名</button>}
                 </section>}
                 {view === "settings" && admin && <AdminSettings state={s} busy={busy} onAction={run} />}
+                {view === "npu-usage" && admin && <NpuUsage state={s} demo={demo} />}
                 {view === "weekly" && <WeeklyPlanning state={s} busy={busy} onAction={run} onDirty={setWeeklyDirty} {...weeklyContext} onSelect={(planId, section) => setWeeklyContext({ planId, section })} onOpenAllocation={(planId, section) => { setWeeklyContext({ planId, section }); navigate("allocation"); }} />}
                 {view === "allocation" && <WeeklyAllocation state={s} busy={busy} onAction={run} onDirty={setWeeklyDirty} {...weeklyContext} onSelect={(planId, section) => setWeeklyContext({ planId, section })} onBack={(planId, section) => { setWeeklyContext({ planId, section }); navigate("weekly"); }} />}
                 {view === "overview" && (
