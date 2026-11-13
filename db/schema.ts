@@ -50,3 +50,16 @@ export const weeklyDemands = sqliteTable("weekly_demands", {
   id: text("id").primaryKey(),
   payload: text("payload").notNull(),
 });
+export const npuDays = sqliteTable("npu_days", {
+  id: text("id").primaryKey(),
+  resourceId: text("resource_id").notNull(),
+  day: text("day").notNull(),
+  expected: integer("expected").notNull(),
+  samples: text("samples").notNull(),
+});
+export const npuLatest = sqliteTable("npu_latest", {
+  resourceId: text("resource_id").primaryKey(),
+  expected: integer("expected").notNull(),
+  sampledAt: integer("sampled_at").notNull(),
+  cards: text("cards").notNull(),
+});

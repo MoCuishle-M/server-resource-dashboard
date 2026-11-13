@@ -1,0 +1,27 @@
+.npu-usage { display: grid; gap: 16px; min-width: 0; }
+.npu-filters { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.npu-filters label { display: grid; gap: 5px; color: #526a7c; font-size: 13px; }
+.npu-filters input, .npu-filters select { min-height: 36px; padding: 5px 9px; }
+.npu-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.npu-kpis > div, .npu-panel { background: #fff; border: 1px solid #dce5eb; border-radius: 10px; padding: 16px; min-width: 0; }
+.npu-kpis span, .npu-cards small { color: #526a7c; font-size: 13px; }
+.npu-kpis strong { display: block; margin-top: 6px; font-size: 25px; color: #173847; }
+.npu-panel h2, .npu-detail h3 { margin: 0 0 10px; }
+.npu-legend, .npu-empty { margin: 0 0 8px; color: #536a7d; font-size: 13px; }
+.npu-table-wrap { overflow-x: auto; max-width: 100%; }
+.npu-table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+.npu-table th, .npu-table td { padding: 9px 10px; text-align: left; border-bottom: 1px solid #e8eef2; }
+.npu-table thead, .npu-selected { background: #edf6f6; }
+.npu-table td { font-variant-numeric: tabular-nums; }
+.npu-detail { display: grid; gap: 8px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #e1e9ed; }
+.npu-trend-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 13px; }
+.npu-trend-controls label { display: flex; align-items: center; gap: 5px; }
+.npu-trend-shared-key { color: #88521f; }
+.npu-trend-shared-key::before { display: inline-block; content: ""; width: 10px; height: 10px; margin-right: 5px; background: #fae5c9; }
+.npu-trend-plot { min-width: 0; }
+.npu-trend-plot svg { display: block; width: 100%; overflow: visible; }
+.npu-trend-plot text { font-size: 11px; fill: #526a7c; }
+.npu-trend-shared { fill: #fae5c9; opacity: .65; }
+.npu-trend-detail { min-height: 20px; margin: 0; color: #526a7c; font-size: 13px; }
+.npu-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.npu-cards > div { display: grid; gap: 4px; padding: 9px; border: 1px solid #dce5eb; border-radius: 6px; }
