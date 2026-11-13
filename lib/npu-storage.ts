@@ -2,7 +2,8 @@ import { z } from "zod";
 import { DomainError } from "./domain";
 import { analyzeUsage, dayMs, minuteMs, usageRange, type MinuteSample, type NpuCard } from "./npu-usage";
 import { shiftDate } from "./schedule";
-import type { Resource, State } from "./types";
+import { canViewNpuUsage, visibleResourceState } from "./resource-policy";
+import type { Actor, Resource, State } from "./types";
 
 const count = z.number().int().min(0).max(128);
 const percent = z.number().min(0).max(100);
@@ -108,7 +109,9 @@ export async function saveUsage(db: D1Database, input: unknown, now: number) {
   return { resourceId, day: body.day, minutes: body.points.length };
 }
 
-export async function readUsage(db: D1Database, state: State, url: URL, now: number) {
+export async function readUsage(db: D1Database, state: State, actor: Actor, url: URL, now: number) {
+  if (!canViewNpuUsage(actor)) throw new DomainError(403, "需要管理员或已审批的接口人权限");
+  const visibleState = visibleResourceState(state, actor);
   const range = usageRange(url.searchParams.get("start") ?? "", url.searchParams.get("end") ?? "", now);
   const [days, latest] = await Promise.all([
     db.prepare("SELECT resource_id, day, expected, samples FROM npu_days WHERE id >= ? AND id < ?")
@@ -117,7 +120,7 @@ export async function readUsage(db: D1Database, state: State, url: URL, now: num
       .all<{ resource_id: string; expected: number; sampled_at: number; cards: string }>(),
   ]);
   return analyzeUsage(
-    state,
+    visibleState,
     days.results.map(row => ({ resourceId: row.resource_id, day: row.day, expected: row.expected, samples: JSON.parse(row.samples) })),
     latest.results.map(row => ({
       resourceId: row.resource_id, expected: row.expected,

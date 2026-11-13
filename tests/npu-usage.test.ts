@@ -4,7 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { Miniflare } from "miniflare";
 import { analyzeUsage, minuteMs, usageRange } from "../lib/npu-usage";
 import { authorizeCollector, readCollectorPayload, readUsage, saveUsage } from "../lib/npu-storage";
-import type { Booking, Group, Resource } from "../lib/types";
+import type { Actor, Booking, Group, Resource } from "../lib/types";
 
 const day = "2026-11-10";
 const midnight = Date.parse(`${day}T00:00:00+08:00`);
@@ -16,6 +16,7 @@ const resource: Resource = {
   deleted: false, createdAt: at(0), updatedAt: at(0),
 };
 const groups: Group[] = ["a", "b", "c"].map(id => ({ id, name: id, contactName: "", employeeId: "" }));
+const admin: Actor = { userId: "admin", email: "admin@example.test", displayName: "管理员", role: "admin", groupId: "", employeeId: "" };
 const booking = (id: string, groupId: string, from: number, to: number, priority: Booking["priority"] = "normal"): Booking => ({
   id, resourceId: resource.id, groupId, requestId: id, startAt: at(from), endAt: at(to), priority,
   status: "scheduled", purpose: "", parentId: "", createdAt: at(0), updatedAt: at(0),
@@ -97,7 +98,7 @@ test("D1 minute-only uploads appear in machine and group analysis; non-blue reso
       await assert.rejects(saveUsage(db, { ...sample, ip: host.ip }, now), /匹配蓝区资源/);
     }
     const { emptyState } = await import("../lib/domain");
-    const result = await readUsage(db, { ...emptyState(), resources: [resource], groups, bookings: [booking("a", "a", 540, 541)] },
+    const result = await readUsage(db, { ...emptyState(), resources: [resource], groups, bookings: [booking("a", "a", 540, 541)] }, admin,
       new URL(`https://test.invalid/?start=${day}&end=${day}&group=a&machine=${resource.id}`), now);
     assert.equal(result.machines.length, 1);
     assert.equal(result.machines[0].snapshot, null);
@@ -136,11 +137,30 @@ test("D1 ingest authenticates, merges repeat uploads and keeps the newest snapsh
     await saveUsage(db, { ...sample, points: [[540, 8, 0, 8, 0]], snapshot: { ...sample.snapshot, at: Date.parse(at(540)) } }, now);
     await assert.rejects(saveUsage(db, { ...sample, ip: "192.0.2.255" }, now), /匹配蓝区资源/);
     const { emptyState } = await import("../lib/domain");
-    const result = await readUsage(db, { ...emptyState(), resources: [resource], groups, bookings: [booking("a", "a", 540, 542)] },
-      new URL(`https://test.invalid/?start=${day}&end=${day}`), now);
+    const hidden = { ...resource, id: "hidden", ip: "192.0.2.2", hidden: true };
+    await db.prepare("INSERT INTO resources (id, payload) VALUES (?, ?)").bind(hidden.id, JSON.stringify(hidden)).run();
+    await saveUsage(db, { ...sample, ip: hidden.ip }, now);
+    const state = { ...emptyState(), resources: [resource, hidden], groups, bookings: [
+      booking("a", "a", 540, 542), { ...booking("hidden", "b", 541, 542), resourceId: hidden.id },
+    ] };
+    const url = new URL(`https://test.invalid/?start=${day}&end=${day}&machine=hidden&group=b`);
+    const result = await readUsage(db, state, admin, url, now);
     assert.equal(result.groups[0].observed, 16);
     assert.equal(result.groups[0].occupied, 4);
     assert.equal(result.machines[0].snapshot?.at, sample.snapshot.at);
+    assert.equal(result.machines.length, 2);
+    assert.equal(result.fleet.observed, 24);
+    assert.equal(result.groupHeatmap.length, 1);
+    const contact = { ...admin, role: "contact" as const, groupId: "a" };
+    const visible = await readUsage(db, state, contact, url, now);
+    assert.deepEqual(visible.machines.map(machine => machine.id), [resource.id]);
+    assert.equal(visible.fleet.observed, 16);
+    assert.equal(visible.groups[1].expected, 0);
+    assert.deepEqual(visible.groupHeatmap, []);
+    assert.deepEqual(visible.machineTrend, []);
+    for (const role of ["visitor", "member"] as const) {
+      await assert.rejects(readUsage(db, state, { ...admin, role }, url, now), { status: 403 });
+    }
   } finally {
     await mf.dispose();
   }
