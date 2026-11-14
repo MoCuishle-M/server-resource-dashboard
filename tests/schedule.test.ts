@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calendarRange, customRange, layoutBookings, shiftDate, timelineTicks } from "../lib/schedule";
+import { calendarRange, customRange, layoutBookings, layoutGroupAvailability, shiftDate, timelineTicks } from "../lib/schedule";
 import type { Booking } from "../lib/types";
 import { bookingAvailability, displayBookings, requestPriorityPreview } from "../lib/priority";
 import type { Resource } from "../lib/types";
@@ -27,6 +27,45 @@ test("the schedule grid hides Canada notes and moves smoke to the IP without hid
 });
 
 const booking = (id: string, startAt: string, endAt: string, status: Booking["status"] = "scheduled") => ({ id, startAt, endAt, status, priority: "normal" } as Booking);
+
+test("selected-group ordinary access covers the range and accounts for other groups' multi-machine tasks", () => {
+  const at = (h: number) => `2026-11-15T${String(h).padStart(2, "0")}:00:00.000Z`;
+  const resource = { id: "r", status: "available", sharingMode: "shared" } as Resource;
+  const normal = { ...booking("normal", at(1), at(11)), resourceId: "r", groupId: "g1" };
+  const high = { ...normal, id: "other-group", groupId: "g2", priority: "high" as const, startAt: at(4), endAt: at(6) };
+  const peer = { ...normal, id: "peer", groupId: "g2", startAt: at(2), endAt: at(9) };
+  const range = { startAt: at(0), endAt: at(12) };
+  const result = layoutGroupAvailability(resource, [normal, peer, high, { ...high, id: "cancelled", startAt: at(7), endAt: at(9), status: "cancelled" }], "g1", range);
+  assert.deepEqual(result.map(s => [s.startAt, s.endAt, s.available]), [
+    [at(0), at(1), false], [at(1), at(4), true], [at(4), at(6), false], [at(6), at(11), true], [at(11), at(12), false],
+  ]);
+  assert.equal(result[2].reason, "多机任务占用");
+  assert(Math.abs(result.reduce((sum, s) => sum + s.width, 0) - 100) < 1e-9);
+  assert.equal(result[0].left, 0);
+  assert.deepEqual(layoutGroupAvailability({ ...resource, sharingMode: "exclusive" }, [normal, high], "g1", range),
+    layoutGroupAvailability(resource, [normal, high], "g1", range));
+  assert(layoutGroupAvailability(resource, [high], "g2", range).every(s => !s.available));
+});
+
+test("ordinary access clips released history, excludes preempted gaps and suspends access at actual block start", () => {
+  const at = (h: number) => `2026-11-15T${String(h).padStart(2, "0")}:00:00.000Z`;
+  const resource = { id: "r", status: "available", sharingMode: "exclusive", timeBlocks: [{
+    id: "upgrade", kind: "upgrade", label: "", displayStartAt: at(3), startAt: at(5), endAt: at(6), status: "active", createdAt: "", updatedAt: "",
+  }] } as Resource;
+  const normal = { ...booking("old", at(0), at(10), "preempted"), resourceId: "r", groupId: "g1", parentId: "" };
+  const result = layoutGroupAvailability(resource, [normal,
+    { ...normal, id: "retained", status: "released", startAt: at(2), endAt: at(7), parentId: normal.id },
+    { ...normal, id: "tail", status: "scheduled", startAt: at(9), endAt: at(10), parentId: normal.id },
+  ], "g1", { startAt: at(3), endAt: at(9) });
+  assert.deepEqual(result.map(s => [s.startAt, s.endAt, s.available]), [
+    [at(3), at(5), true], [at(5), at(6), false], [at(6), at(7), true], [at(7), at(9), false],
+  ]);
+  assert.equal(result[1].reason, "正在升级");
+  const unavailable = layoutGroupAvailability({ ...resource, status: "fault" }, [normal], "g1", { startAt: at(3), endAt: at(9) });
+  assert.equal(unavailable.length, 1);
+  assert.equal(unavailable[0].reason, "故障中");
+  assert.equal(unavailable[0].width, 100);
+});
 
 test("Beijing weeks run Monday midnight to the following Monday across year and month boundaries", () => {
   assert.deepEqual(calendarRange("2026-10-21", "week"), {

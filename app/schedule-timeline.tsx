@@ -6,7 +6,7 @@ import { resourceStatusLabels } from "@/lib/resource-policy";
 import { resourceSearch } from "@/lib/resource-search";
 import ResourceTypeFilter from "./resource-type-filter";
 import ListPagination, { useListPagination } from "./list-pagination";
-import { calendarRange, customRange, layoutBookings, layoutTimeBlocks, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
+import { calendarRange, customRange, layoutBookings, layoutGroupAvailability, layoutTimeBlocks, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
 import type { Booking, Group, Resource, ResourceTimeBlock, WeeklyPlan } from "@/lib/types";
 import { timeBlockTitle } from "@/lib/resource-time-blocks";
 import { scheduleNoteDisplay, scheduleNotes } from "@/lib/schedule-notes";
@@ -113,6 +113,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
         resource, regular,
         notes: scheduleNoteDisplay(scheduleNotes(weeklyPlans, resource.id, range)),
         blocks: layoutTimeBlocks(resource.timeBlocks ?? [], range),
+        availability: group ? layoutGroupAvailability(resource, bookings, group, range) : [],
         elevated: bars.filter(({ booking }) => booking.priority !== "normal"),
       };
     })
@@ -135,7 +136,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
     <div className="section-heading schedule-heading">
       <div>
         <h2>资源时间线</h2>
-        <p>「使用组」显示所选日期内的常态安排。右侧显示高优、紧急排期和时段标记，同级重叠时分行。未被临时占用或停用的时段按常态安排使用。点击 IP 或组名可查看详情。</p>
+        <p>{group ? "已选择使用组：绿色表示该组普通时段可用，灰色表示不可用，红色继续展示该组多机任务。其他组的多机任务占用和停用时段也会计入不可用区间。" : "「使用组」显示所选日期内的常态安排。右侧显示高优、紧急排期和时段标记，同级重叠时分行。未被临时占用或停用的时段按常态安排使用。"}点击 IP 或组名可查看详情。</p>
       </div>
       <div className="schedule-modes" aria-label="排期查看方式">
         {([ ["week", "一周"], ["day", "单日"], ["range", "自定义范围"] ] as const).map(([key, label]) =>
@@ -195,7 +196,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
         </th></tr></thead>
         {[...pageRacks].map(([key, rows]) => {
           const merged = rows.length > 1 && rows.length === allRacks.get(key)?.length;
-          return <tbody key={key}>{rows.map(({ resource: r, regular, elevated, notes, blocks }, i) => <tr key={r.id}>
+          return <tbody key={key}>{rows.map(({ resource: r, regular, elevated, notes, blocks, availability }, i) => <tr key={r.id}>
           {(!merged || i === 0) && <th className="schedule-group-cell" scope={merged ? "rowgroup" : "row"} rowSpan={merged ? rows.length : undefined}>{resourceGroupLabel(r)}</th>}
           <td className={`schedule-ip-cell${notes.smoke.length ? " is-smoke" : ""}`}>
             <button className="schedule-resource-info" aria-label={`查看服务器 ${r.ip} 详情`} onClick={() => onDetail(r)}>{r.ip}</button>
@@ -211,7 +212,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
           <td className="schedule-usage-cell">
             {regular.size ? <div className="schedule-usage-list">{[...regular].sort(([a], [b]) => groupOrder.compare(groupName(a), groupName(b))).map(([groupId, entries]) =>
               <button key={groupId} className="schedule-usage-name" title={entries.map(b => bookingText(b, r).label).join("\n\n")} onClick={() => onDetail(r)}>{groupName(groupId)}</button>
-            )}</div> : <span className="muted" aria-label="无常态使用组">—</span>}
+            )}</div> : group ? <button className="schedule-usage-name" title={elevated.map(({ booking }) => bookingText(booking, r).label).join("\n\n")} onClick={() => onDetail(r)}>{groupName(group)}</button> : <span className="muted" aria-label="无常态使用组">—</span>}
           </td>
           <td className="timeline-cell">
             <div className="timeline-guides" aria-hidden="true">
@@ -219,7 +220,14 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
             {currentPercent >= 0 && currentPercent < 100 && <i className="timeline-now" style={{ left: `${currentPercent}%` }} title="当前时间" aria-hidden="true" />}
             </div>
             <div className="timeline-track" style={{ height: `calc(${Math.max(blocks.lanes, ...elevated.map(bar => bar.lane + 1))} * var(--timeline-lane-height) + 12px)` }}>
-            {!elevated.length && !blocks.bars.length && (r.status !== "available" || !regular.size) && <span className="timeline-empty">{r.status !== "available" ? resourceStatusLabels[r.status] : "暂无排期"}</span>}
+            {!group && !elevated.length && !blocks.bars.length && (r.status !== "available" || !regular.size) && <span className="timeline-empty">{r.status !== "available" ? resourceStatusLabels[r.status] : "暂无排期"}</span>}
+            {availability.map(segment => {
+              const status = segment.available ? "普通时段可用" : "普通时段不可用";
+              const label = `${groupName(group)} · ${status} · ${fullTime(segment.startAt)} — ${fullTime(segment.endAt)}${segment.reason ? ` · ${segment.reason}` : ""}`;
+              return <button key={segment.startAt} className={`booking-chip timeline-booking timeline-ordinary ${segment.available ? "is-available" : "is-unavailable"}`} style={{ left: `${segment.left}%`, width: `${segment.width}%`, top: "6px" }} title={label} aria-label={label} onClick={() => onDetail(r)}>
+                <span className="timeline-summary">{segment.available ? "可用" : "不可用"}</span>
+              </button>;
+            })}
             {blocks.bars.map(({ booking: block, lane, left, width, continuesBefore, continuesAfter }) => {
               const label = `${timeBlockTitle(block)} · ${fullTime(block.startAt)} — ${fullTime(block.endAt)} · 预约使用权暂停，原排期保留`;
               return <button key={block.id} className={`booking-chip timeline-booking timeline-time-block time-block-${block.kind}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane} * var(--timeline-lane-height) + 6px)` }} aria-label={label} title={`${label}${onTimeBlock && block.endAt > now ? "\n点击编辑时段标记" : ""}`} onClick={() => onTimeBlock && block.endAt > now ? onTimeBlock(r, undefined, block) : onDetail(r)}><span className="timeline-summary">{continuesBefore ? "‹ " : ""}<strong>{timeBlockTitle(block)}</strong>{continuesAfter ? " ›" : ""}</span></button>;
@@ -240,6 +248,6 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
       {!resourceRows.length && <div className="empty"><Server size={28} /><h3>{resources.length ? "没有符合条件的排期资源" : "添加资源后即可查看排期"}</h3></div>}
     </div>
     <ListPagination pagination={pagination} label="资源时间线" bottom />
-    <div className="schedule-legend priority-legend"><span><i className="priority-swatch high" />高优</span><span><i className="priority-swatch urgent" />紧急</span><span><i className="priority-swatch time-block-emergency" />紧急占用标记</span><span><i className="priority-swatch time-block-upgrade" />正在升级</span><span>同级共用仅适用于共享服务器</span></div>
+    <div className="schedule-legend priority-legend">{group && <><span><i className="priority-swatch ordinary-available" />普通时段可用</span><span><i className="priority-swatch ordinary-unavailable" />普通时段不可用</span></>}<span><i className="priority-swatch high" />{group ? "多机任务 · 高优" : "高优"}</span><span><i className="priority-swatch urgent" />{group ? "多机任务 · 紧急" : "紧急"}</span><span><i className="priority-swatch time-block-emergency" />紧急占用标记</span><span><i className="priority-swatch time-block-upgrade" />正在升级</span><span>同级共用仅适用于共享服务器</span></div>
   </section>;
 }

@@ -1,5 +1,7 @@
-import type { Booking, ResourceTimeBlock, WeeklyPlan } from "./types";
+import type { Booking, Resource, ResourceTimeBlock, WeeklyPlan } from "./types";
 import { displayBookings, priorityRank } from "./priority";
+import { resourceStatusLabels } from "./resource-policy";
+import { timeBlockTitle } from "./resource-time-blocks";
 
 export type TimelineRange = { startAt: string; endAt: string };
 const hour = 3600000;
@@ -54,6 +56,37 @@ export function layoutBookings(bookings: Booking[], range: TimelineRange) {
 
 export function layoutTimeBlocks(blocks: ResourceTimeBlock[], range: TimelineRange) {
   return layoutRanges(blocks.filter(b => b.status === "active").map(b => ({ ...b, startAt: b.displayStartAt ?? b.startAt })), range);
+}
+
+/** Show ordinary access for one group, retaining blockers from every group. */
+export function layoutGroupAvailability(resource: Resource, bookings: Booking[], groupId: string, range: TimelineRange) {
+  const start = Date.parse(range.startAt), end = Date.parse(range.endAt);
+  if (!(end > start)) return [];
+  const overlaps = (item: TimelineRange) => Date.parse(item.startAt) < end && Date.parse(item.endAt) > start;
+  const relevant = bookings.filter(b => b.resourceId === resource.id &&
+    (b.status === "scheduled" || b.status === "released") &&
+    (b.priority !== "normal" || b.groupId === groupId) && overlaps(b));
+  const blocks = (resource.timeBlocks ?? []).filter(b => b.status === "active" && overlaps(b));
+  const boundaries = [...new Set([start, end, ...[...relevant, ...blocks].flatMap(b => [
+    Math.max(start, Date.parse(b.startAt)), Math.min(end, Date.parse(b.endAt)),
+  ])])].sort((a, b) => a - b);
+  const segments: { startAt: string; endAt: string; available: boolean; reason: string; left: number; width: number }[] = [];
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const from = boundaries[i], to = boundaries[i + 1];
+    const active = relevant.filter(b => Date.parse(b.startAt) <= from && Date.parse(b.endAt) > from);
+    const activeBlocks = blocks.filter(b => Date.parse(b.startAt) <= from && Date.parse(b.endAt) > from);
+    const reason = resource.status !== "available" ? resourceStatusLabels[resource.status]
+      : activeBlocks.length ? [...new Set(activeBlocks.map(timeBlockTitle))].join("、")
+        : active.some(b => b.priority !== "normal") ? "多机任务占用"
+          : !active.some(b => b.priority === "normal" && b.groupId === groupId) ? "无该组普通时段安排" : "";
+    const previous = segments.at(-1);
+    if (previous && previous.reason === reason) {
+      previous.endAt = new Date(to).toISOString();
+      previous.width = (to - Date.parse(previous.startAt)) / (end - start) * 100;
+    } else segments.push({ startAt: new Date(from).toISOString(), endAt: new Date(to).toISOString(),
+      available: !reason, reason, left: (from - start) / (end - start) * 100, width: (to - from) / (end - start) * 100 });
+  }
+  return segments;
 }
 
 function layoutRanges<T extends { id: string; startAt: string; endAt: string }>(
