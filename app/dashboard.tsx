@@ -59,7 +59,7 @@ import {
   timeRange,
   serializePublic,
 } from "@/lib/domain";
-import { resourceStatusLabels } from "@/lib/resource-policy";
+import { canViewNpuUsage, resourceStatusLabels } from "@/lib/resource-policy";
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
 import NpuUsage from "./npu-usage";
@@ -467,10 +467,12 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
     employeeId: "",
   };
   const admin = actor.role === "admin";
+  const showNpuUsage = canViewNpuUsage(actor);
   const visitor = actor.role === "visitor";
   const visibleNav = nav.filter(n => visitor
     ? n.id === "overview" || n.id === "schedule"
-    : (!["settings", "npu-usage"].includes(n.id) || admin) && (!["weekly", "allocation"].includes(n.id) || admin || actor.role === "contact"));
+    : (n.id !== "settings" || admin) && (n.id !== "npu-usage" || showNpuUsage) &&
+      (!["weekly", "allocation"].includes(n.id) || admin || actor.role === "contact"));
   const defaultView = visitor ? "schedule" : "overview";
   const view = selectedView && visibleNav.some(n => n.id === selectedView) ? selectedView : defaultView;
   useEffect(() => {
@@ -1109,7 +1111,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                   {admin && <button className="text-button" onClick={() => navigate("settings")}>编辑公告与签名</button>}
                 </section>}
                 {view === "settings" && admin && <AdminSettings state={s} busy={busy} onAction={run} />}
-                {view === "npu-usage" && admin && <NpuUsage state={s} demo={demo} />}
+                {view === "npu-usage" && showNpuUsage && <NpuUsage state={s} demo={demo} />}
                 {view === "weekly" && <WeeklyPlanning state={s} busy={busy} onAction={run} onDirty={setWeeklyDirty} {...weeklyContext} onSelect={(planId, section) => setWeeklyContext({ planId, section })} onOpenAllocation={(planId, section) => { setWeeklyContext({ planId, section }); navigate("allocation"); }} />}
                 {view === "allocation" && <WeeklyAllocation state={s} busy={busy} onAction={run} onDirty={setWeeklyDirty} {...weeklyContext} onSelect={(planId, section) => setWeeklyContext({ planId, section })} onBack={(planId, section) => { setWeeklyContext({ planId, section }); navigate("weekly"); }} />}
                 {view === "overview" && (

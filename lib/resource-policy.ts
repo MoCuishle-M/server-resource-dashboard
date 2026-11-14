@@ -4,6 +4,10 @@ export const resourceStatusLabels: Record<Resource["status"], string> = {
   available: "可申请", maintenance: "维护中", unavailable: "不可用", fault: "故障中",
 };
 
+export function canViewNpuUsage(actor: Pick<Actor, "role">) {
+  return actor.role === "admin" || actor.role === "contact";
+}
+
 /** Apply before serializing, including action responses and demo role changes. */
 export function visibleResourceState(s: State, actor: Actor): State {
   if (actor.role === "admin") return s;
