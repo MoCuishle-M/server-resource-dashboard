@@ -5,7 +5,7 @@ export const resourceStatusLabels: Record<Resource["status"], string> = {
 };
 
 export function canViewNpuUsage(actor: Pick<Actor, "role">) {
-  return actor.role === "admin" || actor.role === "contact";
+  return actor.role === "admin" || actor.role === "contact" || actor.role === "visitor";
 }
 
 /** Apply before serializing, including action responses and demo role changes. */

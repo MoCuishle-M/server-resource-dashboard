@@ -158,9 +158,17 @@ test("D1 ingest authenticates, merges repeat uploads and keeps the newest snapsh
     assert.equal(visible.groups[1].expected, 0);
     assert.deepEqual(visible.groupHeatmap, []);
     assert.deepEqual(visible.machineTrend, []);
-    for (const role of ["visitor", "member"] as const) {
-      await assert.rejects(readUsage(db, state, { ...admin, role }, url, now), { status: 403 });
-    }
+    const visitor: Actor = { userId: "", email: "", displayName: "访客", role: "visitor", groupId: "", employeeId: "" };
+    const publicResult = await readUsage(db, state, visitor, url, now);
+    assert.deepEqual(publicResult, visible);
+    assert(!JSON.stringify(publicResult).includes(hidden.id));
+    const publicDetails = await readUsage(db, state, visitor,
+      new URL(`https://test.invalid/?start=${day}&end=${day}&group=a&machine=${resource.id}`), now);
+    assert.equal(publicDetails.machineTrend[36].observed, 16);
+    assert.equal(publicDetails.groupTrend[36].occupied, 4);
+    assert.deepEqual(publicDetails.groupHeatmap.map(machine => machine.id), [resource.id]);
+    assert.equal(publicDetails.machines[0].snapshot?.at, sample.snapshot.at);
+    await assert.rejects(readUsage(db, state, { ...admin, role: "member" }, url, now), { status: 403 });
   } finally {
     await mf.dispose();
   }

@@ -110,7 +110,7 @@ export async function saveUsage(db: D1Database, input: unknown, now: number) {
 }
 
 export async function readUsage(db: D1Database, state: State, actor: Actor, url: URL, now: number) {
-  if (!canViewNpuUsage(actor)) throw new DomainError(403, "需要管理员或已审批的接口人权限");
+  if (!canViewNpuUsage(actor)) throw new DomainError(403, "当前账号无权查看 NPU 使用分析");
   const visibleState = visibleResourceState(state, actor);
   const range = usageRange(url.searchParams.get("start") ?? "", url.searchParams.get("end") ?? "", now);
   const [days, latest] = await Promise.all([

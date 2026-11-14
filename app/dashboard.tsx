@@ -470,7 +470,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   const showNpuUsage = canViewNpuUsage(actor);
   const visitor = actor.role === "visitor";
   const visibleNav = nav.filter(n => visitor
-    ? n.id === "overview" || n.id === "schedule"
+    ? n.id === "overview" || n.id === "schedule" || (n.id === "npu-usage" && showNpuUsage)
     : (n.id !== "settings" || admin) && (n.id !== "npu-usage" || showNpuUsage) &&
       (!["weekly", "allocation"].includes(n.id) || admin || actor.role === "contact"));
   const defaultView = visitor ? "schedule" : "overview";
