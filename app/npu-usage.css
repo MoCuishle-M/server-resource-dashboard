@@ -8,6 +8,9 @@
 .npu-kpis strong { display: block; margin-top: 6px; font-size: 25px; color: #173847; }
 .npu-panel h2, .npu-detail h3 { margin: 0 0 10px; }
 .npu-legend, .npu-empty { margin: 0 0 8px; color: #536a7d; font-size: 13px; }
+.npu-metric-notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px 24px; margin: 0; font-size: 13px; }
+.npu-metric-notes dt { margin-bottom: 4px; color: #173847; font-weight: 700; }
+.npu-metric-notes dd { margin: 0; color: #536a7d; line-height: 1.7; }
 .npu-table-wrap { overflow-x: auto; max-width: 100%; }
 .npu-table { width: 100%; border-collapse: collapse; white-space: nowrap; }
 .npu-table th, .npu-table td { padding: 9px 10px; text-align: left; border-bottom: 1px solid #e8eef2; }

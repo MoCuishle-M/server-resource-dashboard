@@ -85,7 +85,7 @@ function Ranking({ rows, metric, descending, groups = false, selected, onSelect 
       {groups && <><th>共用卡时</th><th>共用卡占用率</th></>}</tr></thead>
     <tbody>{sorted.map((row, index) => <tr key={row.id} className={selected === row.id ? "npu-selected" : undefined}>
       <td>{ranked(row) ? index + 1 : "—"}</td>
-      <th scope="row"><button className="text-button" onClick={() => onSelect(row.id)}>{row.name}</button></th>
+      <th scope="row"><button className="text-button" onClick={() => onSelect(row.id)}>{groups ? <strong>{row.name}</strong> : row.name}</button></th>
       <td>{percent(valueOf(row, "occupied"))}</td><td>{percent(valueOf(row, "compute"))}</td>
       <td>{percent(coverage(row, metric))}</td><td>{hours(groups ? row.expected : row.observed)}</td>
       {groups && <><td>{hours(row.shared)}</td>
@@ -238,20 +238,16 @@ export default function NpuUsage({ state, demo }: { state: State; demo: boolean 
         <div><span>采样覆盖率</span><strong>{percent(coverage(data.fleet, metric))}</strong></div>
       </div>
       <p className="npu-legend">北京时间 · 最多选择 7 天 · 覆盖率达到 80% 参与所选指标排名</p>
-      <section className="npu-panel">
-        <h2>机器排行</h2>
-        <Ranking rows={data.machines} metric={metric} descending={descending} selected={machine} onSelect={setMachine} />
-        {selected && <div className="npu-detail">
-          <h3>{selected.name} · 选定时段</h3>
-          <UsageTrend key={selected.id} data={data} values={data.machineTrend} />
-          {selected.snapshot ? <>
-            <h3>最新卡状态 · {time(selected.snapshot.at)}</h3>
-            <div className="npu-cards">{selected.snapshot.cards.map(card => <div key={card.key}>
-              <strong>卡 {card.key}</strong><span>{states[card.state] ?? card.state}</span>
-              <small>计算 {percent(card.util)} · HBM {percent(card.hbm)}</small>
-            </div>)}</div>
-          </> : <p className="npu-empty">尚未上报卡状态快照，历史使用率仍正常统计。</p>}
-        </div>}
+      <section className="npu-panel" aria-labelledby="npu-metric-notes">
+        <h2 id="npu-metric-notes">指标说明</h2>
+        <dl className="npu-metric-notes">
+          <div><dt>卡占用率</dt><dd>有效采样里，有多少比例的卡在被占用。卡上有进程，或显存占用超过 10%，就算占用。</dd></div>
+          <div><dt>计算利用率</dt><dd>有效采样里，每张卡的计算利用率平均是多少。卡被占用时，计算利用率也可能很低。</dd></div>
+          <div><dt>覆盖率</dt><dd>应该采到的数据里，有多少实际采到了。按当前选中的排行指标计算，缺测会降低覆盖率。</dd></div>
+          <div><dt>排期卡时</dt><dd>组在有效排期内获得的卡数 × 时长。比如 8 张卡排了 2 小时，就是 16 卡时。</dd></div>
+          <div><dt>共用卡时</dt><dd>排期卡时里，与其他组同时排到同一台机器的部分。比如 8 张卡共用 1 小时，每个参与组都记 8 共用卡时。</dd></div>
+          <div><dt>共用卡占用率</dt><dd>只看共用时段，计算整机有多少比例的卡被占用。比如 8 张卡里平均有 2 张被占用，就是 25%，这份观测计入每个参与组。</dd></div>
+        </dl>
       </section>
       <section className="npu-panel">
         <h2>组排行</h2>
@@ -267,6 +263,21 @@ export default function NpuUsage({ state, demo }: { state: State; demo: boolean 
             {data.groupHeatmap.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
           </select></label></div>
           <UsageTrend key={group} data={data} values={selectedGroupMachine?.values ?? data.groupTrend} />
+        </div>}
+      </section>
+      <section className="npu-panel">
+        <h2>机器排行</h2>
+        <Ranking rows={data.machines} metric={metric} descending={descending} selected={machine} onSelect={setMachine} />
+        {selected && <div className="npu-detail">
+          <h3>{selected.name} · 选定时段</h3>
+          <UsageTrend key={selected.id} data={data} values={data.machineTrend} />
+          {selected.snapshot ? <>
+            <h3>最新卡状态 · {time(selected.snapshot.at)}</h3>
+            <div className="npu-cards">{selected.snapshot.cards.map(card => <div key={card.key}>
+              <strong>卡 {card.key}</strong><span>{states[card.state] ?? card.state}</span>
+              <small>计算 {percent(card.util)} · HBM {percent(card.hbm)}</small>
+            </div>)}</div>
+          </> : <p className="npu-empty">尚未上报卡状态快照，历史使用率仍正常统计。</p>}
         </div>}
       </section>
     </>}
