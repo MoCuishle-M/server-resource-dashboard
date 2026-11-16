@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { Miniflare } from "miniflare";
-import { analyzeUsage, minuteMs, usageRange } from "../lib/npu-usage";
+import { analyzeUsage, dayMs, minuteMs, usageRange, type NpuDay } from "../lib/npu-usage";
 import { authorizeCollector, readCollectorPayload, readUsage, saveUsage } from "../lib/npu-storage";
 import type { Actor, Booking, Group, Resource } from "../lib/types";
 
@@ -76,6 +76,31 @@ test("day-only and snapshot-only machines remain visible without double counting
   assert.equal(result.fleet.occupied, 6);
   assert.equal(result.fleet.expected, 20 * 600);
   assert.equal(result.machineTrend[36].observed, 8);
+});
+
+test("retirement preserves past usage, caps eligible booking time and hides the live snapshot", () => {
+  const active = { ...resource, id: "r2", ip: "192.0.2.2" };
+  const state = { resources: [resource, active], groups, bookings: [booking("a", "a", 540, 543)] };
+  const days: NpuDay[] = [{
+    resourceId: resource.id, day, expected: 8,
+    samples: { 540: [8, 4, 8, 240], 541: [8, 8, 8, 400] },
+  }];
+  const latest = [resource, active].map(host => ({
+    resourceId: host.id, expected: 8, snapshot: { at: now, cards: [] },
+  }));
+  const retirements = new Map([[resource.ip, Date.parse(at(541))]]);
+  const range = usageRange(day, day, now);
+  const result = analyzeUsage(state, days, latest, range, "a", resource.id, retirements);
+  assert.equal(result.monitoredMachines, 1);
+  assert.equal(result.machines.length, 2);
+  assert.equal(result.machines[0].snapshot, null);
+  assert.equal(result.machines[0].expected, 541 * 8);
+  assert.equal(result.groups[0].expected, 8);
+  assert.equal(result.groups[0].occupied, 4);
+  assert.equal(result.machineTrend[36].observed, 8);
+  const nextDay = usageRange("2026-11-11", "2026-11-11", now + dayMs);
+  const after = analyzeUsage(state, [], latest, nextDay, "", "", retirements);
+  assert.deepEqual(after.machines.map(host => host.id), [active.id]);
 });
 
 test("D1 minute-only uploads appear in machine and group analysis; non-blue resources are rejected without writes", async () => {

@@ -232,7 +232,7 @@ export default function NpuUsage({ state, demo }: { state: State; demo: boolean 
     {!error && !data && <p className="npu-empty" role="status">正在计算使用率…</p>}
     {data && <>
       <div className="npu-kpis">
-        <div><span>已接入服务器</span><strong>{data.machines.length}</strong></div>
+        <div><span>当前监控服务器</span><strong>{data.monitoredMachines ?? data.machines.length}</strong></div>
         <div><span>集群卡占用率</span><strong>{percent(valueOf(data.fleet, "occupied"))}</strong></div>
         <div><span>集群计算利用率</span><strong>{percent(valueOf(data.fleet, "compute"))}</strong></div>
         <div><span>采样覆盖率</span><strong>{percent(coverage(data.fleet, metric))}</strong></div>

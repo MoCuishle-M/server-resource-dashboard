@@ -109,7 +109,22 @@ export async function saveUsage(db: D1Database, input: unknown, now: number) {
   return { resourceId, day: body.day, minutes: body.points.length };
 }
 
-export async function readUsage(db: D1Database, state: State, actor: Actor, url: URL, now: number) {
+function effectiveRetirements(setting: string | undefined, now: number) {
+  const retirements = new Map<string, number>();
+  if (!setting) return retirements;
+  try {
+    const parsed = z.record(z.string().trim().min(1), z.string().datetime({ offset: true })).parse(JSON.parse(setting));
+    for (const [ip, timestamp] of Object.entries(parsed)) {
+      const at = Date.parse(timestamp);
+      if (at <= now) retirements.set(ip, at);
+    }
+    return retirements;
+  } catch {
+    throw new DomainError(503, "NPU 监控退役配置无效");
+  }
+}
+
+export async function readUsage(db: D1Database, state: State, actor: Actor, url: URL, now: number, retirementSetting?: string) {
   if (!canViewNpuUsage(actor)) throw new DomainError(403, "当前账号无权查看 NPU 使用分析");
   const visibleState = visibleResourceState(state, actor);
   const range = usageRange(url.searchParams.get("start") ?? "", url.searchParams.get("end") ?? "", now);
@@ -129,5 +144,6 @@ export async function readUsage(db: D1Database, state: State, actor: Actor, url:
     range,
     url.searchParams.get("group") ?? "",
     url.searchParams.get("machine") ?? "",
+    effectiveRetirements(retirementSetting, now),
   );
 }

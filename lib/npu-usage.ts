@@ -93,6 +93,7 @@ export function analyzeUsage(
   range: UsageRange,
   selectedGroup = "",
   selectedResource = "",
+  retirements: ReadonlyMap<string, number> = new Map(),
 ) {
   const resources = new Map(state.resources.map(resource => [resource.id, resource]));
   const dayData = new Map(days.map(day => [`${day.resourceId}/${day.day}`, day]));
@@ -110,20 +111,25 @@ export function analyzeUsage(
   const groupHeatmap = [];
   const groupTrend = selectedGroup ? buckets.map(totals) : [];
   let machineTrend: Totals[] = [];
+  let monitoredMachines = 0;
 
   for (const [resourceId, host] of hosts) {
     const resource = resources.get(resourceId);
     if (!resource) continue;
+    const retiredAt = retirements.get(resource.ip.trim());
+    if (retiredAt === undefined) monitoredMachines++;
+    const monitoredEnd = Math.min(range.end, retiredAt ?? range.end);
+    if (monitoredEnd <= range.start) continue;
     const machine = totals();
-    const spans = effectiveSpans(state, resource, range);
+    const spans = effectiveSpans(state, resource, { ...range, end: monitoredEnd });
     const heatmap = selectedGroup && spans.some(span => span.groups.includes(selectedGroup))
       ? buckets.map(totals) : null;
     const trend = selectedResource === resource.id ? buckets.map(totals) : null;
     let spanIndex = 0;
-    for (let day = range.startDay, dayStart = range.start; dayStart < range.end; day = shiftDate(day, 1), dayStart += dayMs) {
+    for (let day = range.startDay, dayStart = range.start; dayStart < monitoredEnd; day = shiftDate(day, 1), dayStart += dayMs) {
       const data = dayData.get(`${resource.id}/${day}`);
       const expected = data?.expected ?? host.expected;
-      const limit = Math.min(dayStart + dayMs, range.end);
+      const limit = Math.min(dayStart + dayMs, monitoredEnd);
       for (let start = dayStart, minute = 0; start < limit; start += minuteMs, minute++) {
         const end = Math.min(start + minuteMs, limit);
         const sample = data?.samples[minute];
@@ -148,12 +154,12 @@ export function analyzeUsage(
       }
     }
     for (const key of Object.keys(fleet) as (keyof Totals)[]) fleet[key] += machine[key];
-    machineRows.push({ id: resource.id, name: resource.name, ...machine, snapshot: host.snapshot });
+    machineRows.push({ id: resource.id, name: resource.name, ...machine, snapshot: retiredAt === undefined ? host.snapshot : null });
     if (heatmap) groupHeatmap.push({ id: resource.id, name: resource.name, values: heatmap });
     if (trend) machineTrend = trend;
   }
 
-  return { fleet, machines: machineRows, groups: [...groups.values()], buckets, bucketMinutes, groupHeatmap, groupTrend, machineTrend };
+  return { fleet, machines: machineRows, monitoredMachines, groups: [...groups.values()], buckets, bucketMinutes, groupHeatmap, groupTrend, machineTrend };
 }
 
 export type NpuAnalysis = ReturnType<typeof analyzeUsage>;
