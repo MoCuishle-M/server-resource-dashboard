@@ -268,6 +268,11 @@ export default function NpuUsage({ state, demo }: { state: State; demo: boolean 
       <section className="npu-panel">
         <h2>机器排行</h2>
         <Ranking rows={data.machines} metric={metric} descending={descending} selected={machine} onSelect={setMachine} />
+        {!!data.pendingMachines?.length && <div className="npu-pending">
+          <h3>待接入采集（{data.pendingMachines.length} 台）</h3>
+          <p className="npu-legend">台账里已可用，尚未收到采样，不参与排行和覆盖率计算。</p>
+          <ul>{data.pendingMachines.map(row => <li key={row.id}>{row.name}</li>)}</ul>
+        </div>}
         {selected && <div className="npu-detail">
           <h3>{selected.name} · 选定时段</h3>
           <UsageTrend key={selected.id} data={data} values={data.machineTrend} />

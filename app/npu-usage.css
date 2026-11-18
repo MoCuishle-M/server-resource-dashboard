@@ -16,6 +16,9 @@
 .npu-table th, .npu-table td { padding: 9px 10px; text-align: left; border-bottom: 1px solid #e8eef2; }
 .npu-table thead, .npu-selected { background: #edf6f6; }
 .npu-table td { font-variant-numeric: tabular-nums; }
+.npu-pending { margin-top: 16px; }
+.npu-pending h3 { margin: 0 0 6px; font-size: 15px; }
+.npu-pending ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 16px; color: #526a7c; font-size: 13px; }
 .npu-detail { display: grid; gap: 8px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #e1e9ed; }
 .npu-trend-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 13px; }
 .npu-trend-controls label { display: flex; align-items: center; gap: 5px; }
