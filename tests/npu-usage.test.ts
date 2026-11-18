@@ -46,12 +46,13 @@ test("shared observations count for each group while same-group duplicates and f
   assert.equal(result.machineTrend[36].observed, 24);
 });
 
-test("a registered replacement is pending, and a hidden host counts only on sampled days", () => {
+test("registered replacements are pending, and hidden or deleted hosts count only on sampled days", () => {
   const retired: Resource = { ...resource, id: "retired", name: "柜04-CPU1", hidden: true };
+  const deleted: Resource = { ...resource, id: "deleted", name: "柜04-CPU2", deleted: true };
   const pending: Resource = { ...resource, id: "pending", name: "柜09-CPU1" };
   const green: Resource = { ...resource, id: "green", zone: "green" };
-  const state = { resources: [resource, retired, pending, green], groups, bookings: [] };
-  const latest = [resource, retired].map(host => ({
+  const state = { resources: [resource, retired, deleted, pending, green], groups, bookings: [] };
+  const latest = [resource, retired, deleted].map(host => ({
     resourceId: host.id, expected: 8, snapshot: { at: now, cards: [] },
   }));
   const today = usageRange(day, day, now);
@@ -61,13 +62,15 @@ test("a registered replacement is pending, and a hidden host counts only on samp
   assert.equal(current.fleet.expected, 600 * 8);
 
   const yesterday = "2026-11-09";
-  const historical = analyzeUsage(state, [{
-    resourceId: retired.id, day: yesterday, expected: 8, samples: { 1: [8, 2, 8, 100] },
-  }], latest, usageRange(yesterday, day, now));
-  const old = historical.machines.find(row => row.id === retired.id);
-  assert.equal(old?.observed, 8);
-  assert.equal(old?.expected, 1440 * 8);
-  assert.equal(old?.snapshot, null);
+  const historical = analyzeUsage(state, [retired, deleted].map(host => ({
+    resourceId: host.id, day: yesterday, expected: 8, samples: { 1: [8, 2, 8, 100] },
+  })), latest, usageRange(yesterday, day, now));
+  for (const host of [retired, deleted]) {
+    const old = historical.machines.find(row => row.id === host.id);
+    assert.equal(old?.observed, 8);
+    assert.equal(old?.expected, 1440 * 8);
+    assert.equal(old?.snapshot, null);
+  }
 });
 
 test("a shared booking stops during upgrade and preserves valid history before release", () => {
@@ -134,6 +137,16 @@ test("D1 minute-only uploads appear in machine and group analysis; non-blue reso
     assert.equal(result.machineTrend[36].observed, 8);
     assert.equal((await db.prepare("SELECT count(*) AS count FROM npu_days").first<{ count: number }>())?.count, 1);
     assert.equal((await db.prepare("SELECT count(*) AS count FROM npu_latest").first<{ count: number }>())?.count, 0);
+    const pending = { ...resource, id: "pending", ip: "192.0.2.4" };
+    await db.prepare("INSERT INTO resources (id, payload) VALUES (?, ?)").bind(pending.id, JSON.stringify(pending)).run();
+    await saveUsage(db, { ...sample, ip: pending.ip, points: [] }, now);
+    const state = { ...emptyState(), resources: [resource, pending] };
+    for (const selectedDay of [day, "2026-11-09"]) {
+      const analysis = await readUsage(db, state, admin,
+        new URL(`https://test.invalid/?start=${selectedDay}&end=${selectedDay}`), now);
+      assert.deepEqual(analysis.pendingMachines, [{ id: pending.id, name: pending.name }]);
+      assert.deepEqual(analysis.machines.map(row => row.id), selectedDay === day ? [resource.id] : []);
+    }
   } finally {
     await mf.dispose();
   }

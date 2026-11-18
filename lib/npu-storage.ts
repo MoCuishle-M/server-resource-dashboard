@@ -113,21 +113,25 @@ export async function readUsage(db: D1Database, state: State, actor: Actor, url:
   if (!canViewNpuUsage(actor)) throw new DomainError(403, "当前账号无权查看 NPU 使用分析");
   const visibleState = visibleResourceState(state, actor);
   const range = usageRange(url.searchParams.get("start") ?? "", url.searchParams.get("end") ?? "", now);
-  const [days, latest] = await Promise.all([
+  const [days, latest, sampled] = await db.batch([
     db.prepare("SELECT resource_id, day, expected, samples FROM npu_days WHERE id >= ? AND id < ?")
-      .bind(`${range.startDay}/`, `${shiftDate(range.endDay, 1)}/`).all<{ resource_id: string; day: string; expected: number; samples: string }>(),
-    db.prepare("SELECT resource_id, expected, sampled_at, cards FROM npu_latest")
-      .all<{ resource_id: string; expected: number; sampled_at: number; cards: string }>(),
+      .bind(`${range.startDay}/`, `${shiftDate(range.endDay, 1)}/`),
+    db.prepare("SELECT resource_id, expected, sampled_at, cards FROM npu_latest"),
+    db.prepare("SELECT DISTINCT resource_id FROM npu_days WHERE samples <> '{}'"),
   ]);
+  const dayRows = days.results as { resource_id: string; day: string; expected: number; samples: string }[];
+  const latestRows = latest.results as { resource_id: string; expected: number; sampled_at: number; cards: string }[];
+  const sampledRows = sampled.results as { resource_id: string }[];
   return analyzeUsage(
     visibleState,
-    days.results.map(row => ({ resourceId: row.resource_id, day: row.day, expected: row.expected, samples: JSON.parse(row.samples) })),
-    latest.results.map(row => ({
+    dayRows.map(row => ({ resourceId: row.resource_id, day: row.day, expected: row.expected, samples: JSON.parse(row.samples) })),
+    latestRows.map(row => ({
       resourceId: row.resource_id, expected: row.expected,
       snapshot: { at: row.sampled_at, cards: JSON.parse(row.cards) as NpuCard[] },
     })),
     range,
     url.searchParams.get("group") ?? "",
     url.searchParams.get("machine") ?? "",
+    new Set(sampledRows.map(row => row.resource_id)),
   );
 }
