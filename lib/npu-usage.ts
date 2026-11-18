@@ -101,6 +101,12 @@ export function analyzeUsage(
     hosts.set(day.resourceId, { expected: Math.max(hosts.get(day.resourceId)?.expected ?? 0, day.expected), snapshot: null });
   }
   for (const host of latest) hosts.set(host.resourceId, host);
+  const sampledResources = new Set(days.filter(day => Object.keys(day.samples).length > 0).map(day => day.resourceId));
+  const pendingMachines = state.resources
+    .filter(resource => resource.zone === "blue" && resource.status === "available" &&
+      !resource.hidden && !resource.deleted && resource.ip.trim() && !hosts.has(resource.id))
+    .map(({ id, name }) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
   const groups = new Map(state.groups.map(group => [group.id, { id: group.id, name: group.name, ...totals() }]));
   const machineRows = [];
   const fleet = totals();
@@ -113,7 +119,7 @@ export function analyzeUsage(
 
   for (const [resourceId, host] of hosts) {
     const resource = resources.get(resourceId);
-    if (!resource) continue;
+    if (!resource || resource.deleted || (resource.hidden && !sampledResources.has(resourceId))) continue;
     const machine = totals();
     const spans = effectiveSpans(state, resource, range);
     const heatmap = selectedGroup && spans.some(span => span.groups.includes(selectedGroup))
@@ -122,6 +128,8 @@ export function analyzeUsage(
     let spanIndex = 0;
     for (let day = range.startDay, dayStart = range.start; dayStart < range.end; day = shiftDate(day, 1), dayStart += dayMs) {
       const data = dayData.get(`${resource.id}/${day}`);
+      // A hidden machine may retain history, but a stale snapshot must not add missing days to coverage.
+      if (resource.hidden && (!data || Object.keys(data.samples).length === 0)) continue;
       const expected = data?.expected ?? host.expected;
       const limit = Math.min(dayStart + dayMs, range.end);
       for (let start = dayStart, minute = 0; start < limit; start += minuteMs, minute++) {
@@ -148,12 +156,12 @@ export function analyzeUsage(
       }
     }
     for (const key of Object.keys(fleet) as (keyof Totals)[]) fleet[key] += machine[key];
-    machineRows.push({ id: resource.id, name: resource.name, ...machine, snapshot: host.snapshot });
+    machineRows.push({ id: resource.id, name: resource.name, ...machine, snapshot: resource.hidden ? null : host.snapshot });
     if (heatmap) groupHeatmap.push({ id: resource.id, name: resource.name, values: heatmap });
     if (trend) machineTrend = trend;
   }
 
-  return { fleet, machines: machineRows, groups: [...groups.values()], buckets, bucketMinutes, groupHeatmap, groupTrend, machineTrend };
+  return { fleet, machines: machineRows, pendingMachines, groups: [...groups.values()], buckets, bucketMinutes, groupHeatmap, groupTrend, machineTrend };
 }
 
 export type NpuAnalysis = ReturnType<typeof analyzeUsage>;

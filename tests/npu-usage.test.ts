@@ -46,6 +46,30 @@ test("shared observations count for each group while same-group duplicates and f
   assert.equal(result.machineTrend[36].observed, 24);
 });
 
+test("a registered replacement is pending, and a hidden host counts only on sampled days", () => {
+  const retired: Resource = { ...resource, id: "retired", name: "柜04-CPU1", hidden: true };
+  const pending: Resource = { ...resource, id: "pending", name: "柜09-CPU1" };
+  const green: Resource = { ...resource, id: "green", zone: "green" };
+  const state = { resources: [resource, retired, pending, green], groups, bookings: [] };
+  const latest = [resource, retired].map(host => ({
+    resourceId: host.id, expected: 8, snapshot: { at: now, cards: [] },
+  }));
+  const today = usageRange(day, day, now);
+  const current = analyzeUsage(state, [], latest, today);
+  assert.deepEqual(current.machines.map(row => row.id), [resource.id]);
+  assert.deepEqual(current.pendingMachines, [{ id: pending.id, name: pending.name }]);
+  assert.equal(current.fleet.expected, 600 * 8);
+
+  const yesterday = "2026-11-09";
+  const historical = analyzeUsage(state, [{
+    resourceId: retired.id, day: yesterday, expected: 8, samples: { 1: [8, 2, 8, 100] },
+  }], latest, usageRange(yesterday, day, now));
+  const old = historical.machines.find(row => row.id === retired.id);
+  assert.equal(old?.observed, 8);
+  assert.equal(old?.expected, 1440 * 8);
+  assert.equal(old?.snapshot, null);
+});
+
 test("a shared booking stops during upgrade and preserves valid history before release", () => {
   const host: Resource = { ...resource, timeBlocks: [{
     id: "upgrade", kind: "upgrade", label: "", startAt: at(541), endAt: at(542),
@@ -147,7 +171,8 @@ test("D1 ingest authenticates, merges repeat uploads and keeps the newest snapsh
     const result = await readUsage(db, state, admin, url, now);
     assert.equal(result.groups[0].observed, 16);
     assert.equal(result.groups[0].occupied, 4);
-    assert.equal(result.machines[0].snapshot?.at, sample.snapshot.at);
+    assert.equal(result.machines.find(row => row.id === resource.id)?.snapshot?.at, sample.snapshot.at);
+    assert.equal(result.machines.find(row => row.id === hidden.id)?.snapshot, null);
     assert.equal(result.machines.length, 2);
     assert.equal(result.fleet.observed, 24);
     assert.equal(result.groupHeatmap.length, 1);
