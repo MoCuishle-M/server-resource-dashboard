@@ -62,6 +62,7 @@ import {
 import { canViewNpuUsage, resourceStatusLabels } from "@/lib/resource-policy";
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
+import NpuLiveOverview from "./npu-live-overview";
 import NpuUsage from "./npu-usage";
 import ResourceTimeBlockForm, { ResourceTimeBlockList } from "./resource-time-block-form";
 import { currentTimeBlock, timeBlockTitle } from "@/lib/resource-time-blocks";
@@ -1398,7 +1399,11 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     <ListPagination pagination={resourcePagination} label="资源清单" bottom />
                   </section>
                 )}
-                {view === "schedule" && (
+                {view === "schedule" && (<>
+                  <NpuLiveOverview state={s} demo={demo} onDetail={id=>{
+                    const resource=resources.find(r=>r.id===id);
+                    if(resource)setDetail(resource);
+                  }}/>
                   <ScheduleTimeline
                     resources={resources}
                     bookings={s.bookings}
@@ -1415,7 +1420,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       else { const resource = s.resources.find(r => r.id === b.resourceId); if (resource) setDetail(resource); }
                     } : undefined}
                   />
-                )}
+                </>)}
                 {view === "requests" && (
                   <section className="panel">
                     <div className="section-heading">

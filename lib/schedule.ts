@@ -59,13 +59,14 @@ export function layoutTimeBlocks(blocks: ResourceTimeBlock[], range: TimelineRan
 }
 
 /** Show ordinary access for one group, retaining blockers from every group. */
-export function layoutGroupAvailability(resource: Resource, bookings: Booking[], groupId: string, range: TimelineRange) {
+export function layoutGroupAvailability(resource: Resource, bookings: Booking[], groupId: string, range: TimelineRange,
+  isDedicated: (booking: Booking) => boolean = booking => booking.priority !== "normal") {
   const start = Date.parse(range.startAt), end = Date.parse(range.endAt);
   if (!(end > start)) return [];
   const overlaps = (item: TimelineRange) => Date.parse(item.startAt) < end && Date.parse(item.endAt) > start;
   const relevant = bookings.filter(b => b.resourceId === resource.id &&
     (b.status === "scheduled" || b.status === "released") &&
-    (b.priority !== "normal" || b.groupId === groupId) && overlaps(b));
+    (isDedicated(b) || b.groupId === groupId) && overlaps(b));
   const blocks = (resource.timeBlocks ?? []).filter(b => b.status === "active" && overlaps(b));
   const boundaries = [...new Set([start, end, ...[...relevant, ...blocks].flatMap(b => [
     Math.max(start, Date.parse(b.startAt)), Math.min(end, Date.parse(b.endAt)),
@@ -77,8 +78,8 @@ export function layoutGroupAvailability(resource: Resource, bookings: Booking[],
     const activeBlocks = blocks.filter(b => Date.parse(b.startAt) <= from && Date.parse(b.endAt) > from);
     const reason = resource.status !== "available" ? resourceStatusLabels[resource.status]
       : activeBlocks.length ? [...new Set(activeBlocks.map(timeBlockTitle))].join("、")
-        : active.some(b => b.priority !== "normal") ? "多机任务占用"
-          : !active.some(b => b.priority === "normal" && b.groupId === groupId) ? "无该组普通时段安排" : "";
+        : active.some(isDedicated) ? "多机任务占用"
+          : !active.some(b => !isDedicated(b) && b.groupId === groupId) ? "无该组普通时段安排" : "";
     const previous = segments.at(-1);
     if (previous && previous.reason === reason) {
       previous.endAt = new Date(to).toISOString();
