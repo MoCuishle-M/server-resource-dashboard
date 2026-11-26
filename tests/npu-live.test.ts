@@ -43,6 +43,27 @@ test("anonymous, unassigned and cross-group requests cannot reach telemetry stor
   await assert.rejects(readLive(db,state,{...actor,userId:"",role:"visitor"},url,now),{status:401});
   await assert.rejects(readLive(db,state,{...actor,role:"member",groupId:""},url,now),{status:403});
   await assert.rejects(readLive(db,state,actor,url,now),{status:403});
+  url.searchParams.set("group","all");
+  await assert.rejects(readLive(db,state,actor,url,now),{status:403});
+});
+
+test("admin overall view counts a shared machine and overlapping observations once", () => {
+  const admin: Actor = {...actor,role:"admin"};
+  const sharedState = {...state,bookings:[
+    ...state.bookings, booking("share","r1",1198,1230,"g2"),
+  ]};
+  const days = [{resourceId:"r1",day:"2026-11-26",expected:8,samples:{
+    1197:[8,0,8,0],1198:[8,8,8,0],
+  }}] satisfies Parameters<typeof liveView>[5];
+  const data = liveView(sharedState,admin,"",now,1,days,[]);
+  assert.equal(data.group,"all");
+  assert.deepEqual(data.machines.map(row=>row.id),["r1","r2","r3"]);
+  const first = data.machines[0];
+  assert.deepEqual(first.groupNames,["g1","g2"]);
+  assert.equal(first.shared,true);
+  assert.equal(first.until,at(1230));
+  assert.equal(first.mean,50);
+  assert.equal(liveView(sharedState,admin,"g1",now,1,days,[]).machines[0].until,at(1260));
 });
 
 test("history covers only the group's ordinary period and leaves missing observations unknown", () =>{

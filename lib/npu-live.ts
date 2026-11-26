@@ -9,6 +9,7 @@ const rackPattern = /^(?:计算柜|机柜|柜|A|B)?\s*0*(1|2|9|11|12)$/i;
 const busy = new Set(["active", "occupied_low", "occupied_unknown"]);
 const at = (value: string) => Date.parse(value);
 const iso = (value: number) => new Date(value).toISOString();
+export const allLiveGroups = "all";
 
 export function canViewNpuLive(actor: Actor) {
   return !!actor.userId && (actor.role === "admin" || actor.role !== "visitor" && !!actor.groupId);
@@ -37,7 +38,28 @@ export function dedicatedBooking(requests: State["requests"]) {
 }
 
 type Window = { start: number; end: number };
-export function liveCandidates(state: Pick<State, "resources" | "bookings" | "requests">, actor: Actor, group: string, now: number, since: number) {
+type LiveGroup = ReturnType<typeof liveGroups>[number];
+
+function liveScope(state: Pick<State, "groups">, actor: Actor, groupId: string) {
+  const groups = liveGroups(state, actor);
+  const group = groupId || (actor.role === "admin" ? allLiveGroups : actor.groupId);
+  if (actor.role === "admin" && group === allLiveGroups) return {groups, group, selected: groups};
+  const selected = groups.filter(g => g.id === group);
+  if (groupId && !selected.length) throw new DomainError(403, "无权查看该分组");
+  return {groups, group, selected};
+}
+
+function unionWindows(windows: Window[]) {
+  const merged: Window[] = [];
+  for (const window of windows.sort((a, b) => a.start - b.start)) {
+    const previous = merged.at(-1);
+    if (previous && window.start <= previous.end) previous.end = Math.max(previous.end, window.end);
+    else merged.push({...window});
+  }
+  return merged;
+}
+
+function liveCandidates(state: Pick<State, "resources" | "bookings" | "requests">, actor: Actor, groups: LiveGroup[], now: number, since: number) {
   const isDedicated = dedicatedBooking(state.requests);
   const byResource = new Map<string, Booking[]>();
   for (const booking of state.bookings) {
@@ -50,15 +72,20 @@ export function liveCandidates(state: Pick<State, "resources" | "bookings" | "re
     const match = resource.rack?.trim().match(rackPattern);
     if (!match || resource.zone !== "blue" || resource.deleted || resource.hidden && actor.role !== "admin") return [];
     const bookings = byResource.get(resource.id) ?? [];
-    const latestEnd = Math.max(now, ...bookings.filter(b => b.groupId === group && !isDedicated(b)).map(b => at(b.endAt)));
-    if (latestEnd <= now) return [];
-    const windows: Window[] = layoutGroupAvailability(resource, bookings, group, {startAt: iso(since), endAt: iso(latestEnd)}, isDedicated)
-      .filter(part => part.available).map(part => ({start: at(part.startAt), end: at(part.endAt)}));
-    const active = windows.find(w => w.start <= now && now < w.end);
-    if (!active) return [];
-    const shared = bookings.some(b => b.groupId !== group && !isDedicated(b) && at(b.startAt) <= now && now < at(b.endAt));
-    const slot = Number(resource.name.match(/(?:CPU|节点)\s*(\d+)\s*$/i)?.[1]) || null;
-    return [{resource, rack: Number(match[1]), slot, until: active.end, shared, windows}];
+    const ordinary = bookings.filter(b => !isDedicated(b));
+    const currentGroups = new Set(ordinary.filter(b => at(b.startAt) <= now && now < at(b.endAt)).map(b => b.groupId));
+    const allocations = groups.filter(g => currentGroups.has(g.id)).flatMap(group => {
+      const latestEnd = Math.max(...ordinary.filter(b => b.groupId === group.id).map(b => at(b.endAt)));
+      const windows = layoutGroupAvailability(resource, bookings, group.id, {startAt: iso(since), endAt: iso(latestEnd)}, isDedicated)
+        .filter(part => part.available).map(part => ({start: at(part.startAt), end: at(part.endAt)}));
+      const active = windows.find(w => w.start <= now && now < w.end);
+      return active ? [{name: group.name, until: active.end, windows}] : [];
+    });
+    if (!allocations.length) return [];
+    const slot = Number(resource.name.match(/(?:CPU|节点)\s*[-_]?\s*(\d+)\s*$/i)?.[1]) || null;
+    return [{resource, rack: Number(match[1]), slot, until: Math.min(...allocations.map(a => a.until)),
+      groupNames: allocations.map(a => a.name), shared: currentGroups.size > 1,
+      windows: unionWindows(allocations.flatMap(a => a.windows))}];
   }).sort((a, b) => a.rack - b.rack || (a.slot ?? Infinity) - (b.slot ?? Infinity) ||
     a.resource.ip.localeCompare(b.resource.ip, undefined, {numeric: true}));
 }
@@ -88,12 +115,10 @@ export function liveHistory(days: NpuDay[], windows: Window[], now: number, hour
 }
 
 export function liveView(state: State, actor: Actor, groupId: string, now: number, hours: number, days: NpuDay[], latest: NpuLatest[]) {
-  const groups = liveGroups(state, actor);
-  if (groupId && !groups.some(g => g.id === groupId)) throw new DomainError(403, "无权查看该分组");
-  const group = groupId || groups.find(g => g.id === actor.groupId)?.id || groups[0]?.id || "";
-  const candidates = liveCandidates(state, actor, group, now, now-hours*60*minuteMs);
+  const {groups, group, selected} = liveScope(state, actor, groupId);
+  const candidates = liveCandidates(state, actor, selected, now, now-hours*60*minuteMs);
   const latestById = new Map(latest.map(row => [row.resourceId, row]));
-  const machines = candidates.map(({resource, rack, slot, until, shared, windows}) => {
+  const machines = candidates.map(({resource, rack, slot, until, groupNames, shared, windows}) => {
     const snap = latestById.get(resource.id);
     const sampledAt = snap?.snapshot.at ?? null;
     const fresh = sampledAt !== null && sampledAt <= now && now-sampledAt <= 3*minuteMs;
@@ -105,20 +130,18 @@ export function liveView(state: State, actor: Actor, groupId: string, now: numbe
     const occupied = cards.filter(s => s === "busy").length;
     const status: "uncertain" | "busy" | "idle" = !fresh || !expected || (idle ?? 0)+occupied !== expected ? "uncertain" : occupied ? "busy" : "idle";
     const reason = !fresh ? sampledAt === null ? "暂无线上样本" : "样本已过期" : status === "uncertain" ? "有卡异常或缺测" : "";
-    return {id: resource.id, ip: resource.ip, rack, slot, until, shared, sampledAt, expected,
+    return {id: resource.id, ip: resource.ip, rack, slot, until, groupNames, shared, sampledAt, expected,
       cards, idle, faults, status, reason, ...liveHistory(history, windows, now, hours)};
   });
   return {groups, group, now, hours, machines};
 }
 
 export async function readLive(db: D1Database, state: State, actor: Actor, url: URL, now: number) {
-  const groups = liveGroups(state, actor);
-  const group = url.searchParams.get("group") || groups.find(g => g.id === actor.groupId)?.id || groups[0]?.id || "";
-  if (group && !groups.some(g => g.id === group)) throw new DomainError(403, "无权查看该分组");
+  const {group, selected} = liveScope(state, actor, url.searchParams.get("group") ?? "");
   const hours = Number(url.searchParams.get("hours") ?? 1);
   if (![1,3,5].includes(hours)) throw new DomainError(400, "请选择近 1、3 或 5 小时");
   const since = now-hours*60*minuteMs;
-  const ids = liveCandidates(state, actor, group, now, since).map(row => row.resource.id);
+  const ids = liveCandidates(state, actor, selected, now, since).map(row => row.resource.id);
   if (!ids.length) return liveView(state, actor, group, now, hours, [], []);
   const params = ids.map(() => "?").join(",");
   const [days, latest] = await Promise.all([
