@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { CalendarClock, ChevronLeft, ChevronRight, Plus, Search, Server, ListFilter } from "lucide-react";
 import { chinaDate, resourceSharingMode } from "@/lib/domain";
 import { resourceStatusLabels } from "@/lib/resource-policy";
@@ -44,13 +44,14 @@ function resourceGroupLabel(r: Resource) {
   return `${r.family || "未登记类型"} ${r.family === "A5" && rack ? `${zone}${cabinet ? cabinet + "柜" : " " + rack}` : zone}`;
 }
 
-export default function ScheduleTimeline({ resources, bookings, groups, rememberGroup = false, weeklyPlans = [], now, onDetail, onRequest, onPriority, onTimeBlock }: {
+export default function ScheduleTimeline({ resources, bookings, groups, rememberGroup = false, weeklyPlans = [], now, renderCurrentUse, onDetail, onRequest, onPriority, onTimeBlock }: {
   resources: Resource[];
   bookings: Booking[];
   groups: Group[];
   rememberGroup?: boolean;
   weeklyPlans?: WeeklyPlan[];
   now: string;
+  renderCurrentUse: (groupId: string) => ReactNode;
   onDetail: (resource: Resource) => void;
   onRequest?: (ids: string[], range: TimelineRange) => void;
   onPriority?: (booking: Booking) => void;
@@ -132,7 +133,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
     }
     setError(""); setMode(next);
   }
-  return <section className="panel schedule-panel">
+  const timeline = <section className="panel schedule-panel">
     <div className="section-heading schedule-heading">
       <div>
         <h2>资源时间线</h2>
@@ -162,12 +163,6 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
       <p className="schedule-range-label" data-start={range.startAt} data-end={range.endAt}>{fullTime(range.startAt)} — {fullTime(range.endAt)} · 北京时间（结束时刻不含在范围内）</p>
     </div>
     <div className="filters schedule-filters">
-      <label className={`schedule-group-filter ${group ? "is-filtered" : ""}`}>
-        <span><ListFilter size={16} />使用组</span>
-        <select aria-label="排期组筛选" value={group} onChange={e => setGroup(e.target.value)}>
-          <option value="">全部团队</option>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-        </select>
-      </label>
       <select aria-label="排期型号筛选" value={family} onChange={e => setFamily(e.target.value)}>
         <option value="">全部类型</option><option value="A3">A3</option><option value="A5">A5</option><option value="unset">未登记类型</option>
       </select>
@@ -250,4 +245,16 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
     <ListPagination pagination={pagination} label="资源时间线" bottom />
     <div className="schedule-legend priority-legend">{group && <><span><i className="priority-swatch ordinary-available" />普通时段可用</span><span><i className="priority-swatch ordinary-unavailable" />普通时段不可用</span></>}<span><i className="priority-swatch high" />{group ? "多机任务 · 高优" : "高优"}</span><span><i className="priority-swatch urgent" />{group ? "多机任务 · 紧急" : "紧急"}</span><span><i className="priority-swatch time-block-emergency" />紧急占用标记</span><span><i className="priority-swatch time-block-upgrade" />正在升级</span><span>同级共用仅适用于共享服务器</span></div>
   </section>;
+  return <>
+    <div className="filters schedule-page-filters">
+      <label className={`schedule-group-filter ${group ? "is-filtered" : ""}`}>
+        <span><ListFilter size={16} />使用组</span>
+        <select aria-label="排期组筛选" value={group} onChange={e => setGroup(e.target.value)}>
+          <option value="">全部团队</option>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select>
+      </label>
+    </div>
+    {renderCurrentUse(group)}
+    {timeline}
+  </>;
 }

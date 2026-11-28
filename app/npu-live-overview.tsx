@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { chinaDate } from "@/lib/domain";
-import { canViewNpuLive, liveGroups, liveLocation, liveView, type LiveView } from "@/lib/npu-live";
+import { canViewNpuLive, liveLocation, liveView, type LiveView } from "@/lib/npu-live";
 import { minuteMs, type NpuAnalysis, type NpuDay, type NpuLatest } from "@/lib/npu-usage";
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import type { PublicState, Resource } from "@/lib/types";
@@ -88,15 +88,12 @@ function demoSamples(state: PublicState, now: number) {
   return {resources, bookings, days, latest};
 }
 
-export default function NpuLiveOverview({state, demo, onDetail}: {
-  state: PublicState; demo: boolean; onDetail: (id: string)=>void;
+export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
+  state: PublicState; demo: boolean; groupId: string; onDetail: (id: string)=>void;
 }) {
-  const [group,setGroup] = useState("");
   const [result,setResult] = useState<LiveView|null>(null),[error,setError] = useState("");
   const allowed = canViewNpuLive(state.actor);
-  const admin = state.actor.role === "admin";
-  const groups = allowed ? liveGroups(state, state.actor) : [];
-  const selectedGroup = groups.find(g=>g.id === (admin && group ? group : state.actor.groupId))?.id ?? groups[0]?.id ?? "";
+  const selectedGroup = state.actor.role === "admin" || state.actor.groupId === groupId ? groupId : "";
   useEffect(()=>{
     if(!allowed||!selectedGroup)return;
     const controller=new AbortController();
@@ -132,13 +129,10 @@ export default function NpuLiveOverview({state, demo, onDetail}: {
   return <section className="panel npu-live-panel" aria-labelledby="npu-live-title">
     <div className="npu-live-header">
       <h2 id="npu-live-title">当前用机</h2>
-      {admin && groups.length > 0 && <label>分组<select value={selectedGroup} onChange={e=>{setResult(null);setError("");setGroup(e.target.value);}}>
-        {groups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
-      </select></label>}
     </div>
-    <div>
+    {!selectedGroup ? <p className="npu-live-prompt">{groupId ? "当前用机仅向本组开放。" : "选择使用组后查看当前用机。"}</p> : <div>
       {error && <p role="alert">{error}</p>}
-      {!error&&!view&&<p role="status">{selectedGroup?"正在读取机器状态…":"暂无使用组。"}</p>}
+      {!error&&!view&&<p className="npu-live-prompt" role="status">正在读取机器状态…</p>}
       {view&&<>
         <dl className="npu-live-summary">
           <div><dt>当前分配</dt><dd>{rows.length}<small>台</small></dd></div>
@@ -160,7 +154,7 @@ export default function NpuLiveOverview({state, demo, onDetail}: {
             </tr>)}</tbody>
           </table></div>}
       </>}
-    </div>
+    </div>}
   </section>;
 }
 

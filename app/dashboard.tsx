@@ -1403,11 +1403,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     <ListPagination pagination={resourcePagination} label="资源清单" bottom />
                   </section>
                 )}
-                {view === "schedule" && (<>
-                  <NpuLiveOverview state={s} demo={demo} onDetail={id=>{
-                    const resource=resources.find(r=>r.id===id);
-                    if(resource)setDetail(resource);
-                  }}/>
+                {view === "schedule" && (
                   <ScheduleTimeline
                     resources={resources}
                     bookings={s.bookings}
@@ -1415,6 +1411,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     rememberGroup={visitor}
                     weeklyPlans={s.weeklyPlans}
                     now={clock}
+                    renderCurrentUse={groupId => <NpuLiveOverview key={groupId} state={s} demo={demo} groupId={groupId} onDetail={id => {
+                      const resource = resources.find(r => r.id === id);
+                      if (resource) setDetail(resource);
+                    }}/>}
                     onDetail={setDetail}
                     onRequest={canApply ? openRequest : undefined}
                     onTimeBlock={admin ? (r, range, block) => openTimeBlock([r.id], block, range) : undefined}
@@ -1424,7 +1424,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                       else { const resource = s.resources.find(r => r.id === b.resourceId); if (resource) setDetail(resource); }
                     } : undefined}
                   />
-                </>)}
+                )}
                 {view === "requests" && (
                   <section className="panel">
                     <div className="section-heading">
