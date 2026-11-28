@@ -25,6 +25,10 @@ try {
   const context = await browser.newContext();
   // Every state read uses sample data; no production actions are sent.
   await context.route("**/api/state", route => route.fulfill({ json: serializePublic(fixture, actor, fixture.now, true) }));
+  await context.route("**/api/npu-live?*", route => {
+    const selectedGroup = new URL(route.request().url()).searchParams.get("group");
+    return route.fulfill({ json: liveView(fixture, actor, selectedGroup, Date.now(), 1, [], []) });
+  });
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", error => errors.push(error.message));
@@ -32,7 +36,7 @@ try {
   await page.goto(base);
   await expect(page.getByRole("heading", { name: /^使用排期/ })).toBeVisible();
   await expect(group).toHaveValue("");
-  await expect(page.getByRole("region", { name: "当前用机" })).toContainText("后可查看所选使用组的机器状态");
+  await expect(page.getByRole("region", { name: "当前用机" })).toContainText("选择使用组后查看当前用机");
   await group.selectOption("g1");
   const visibleRows = await page.locator(".schedule-table tbody tr").count();
   assert(visibleRows > 0, "The selected sample team has scheduled resources");
@@ -139,6 +143,12 @@ try {
   await expect(currentUse.getByText(/11:00/)).toBeVisible();
   await expect(livePage.locator(".timeline-ordinary.is-available")).toHaveAttribute("aria-label", /10:00 — .*11:00$/);
   await expect(livePage.getByRole("button", { name: /普通时段不可用.*11:00.*11:50.*多机任务占用/ })).toBeVisible();
+  liveActor = visitor;
+  await livePage.reload();
+  await expect(livePage.getByRole("heading", { name: /^使用排期/ })).toBeVisible();
+  await livePage.getByLabel("排期组筛选", { exact: true }).selectOption(groupId);
+  await expect(currentUse.getByText("4 / 8", { exact: true })).toBeVisible();
+  await expect(currentUse.getByRole("link", { name: "登录" })).toHaveCount(0);
   liveActor = { ...visitor, userId: "signed-in-member", role: "member", displayName: "普通用户" };
   await livePage.clock.setSystemTime(now + 120_000);
   await livePage.reload();
