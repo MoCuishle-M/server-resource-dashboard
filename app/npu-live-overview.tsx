@@ -11,6 +11,7 @@ import "./npu-live.css";
 
 const fmt = new Intl.DateTimeFormat("zh-CN", {timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit",
   hour: "2-digit", minute: "2-digit", hourCycle: "h23"});
+const slotTime = new Intl.DateTimeFormat("zh-CN", {timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23"});
 const timestamp = (at: number) => fmt.format(at);
 const stateText = {idle: "整机空闲", busy: "有卡占用", uncertain: "状态待确认"};
 const locationNumber = (n: number) => String(n).padStart(2, "0");
@@ -26,11 +27,14 @@ function CardStrip({cards}: {cards: CardState[]}) {
   </span>;
 }
 
-function History({values, mean, gaps}: Pick<LiveView["machines"][number], "values" | "mean" | "gaps">) {
+const gapLabels = { missing: "排期内缺样", outside: "无本组排期", pending: "待同步" };
+
+function History({values, mean, gaps, sampledThrough}: Pick<LiveView["machines"][number], "values" | "mean" | "gaps"> & {
+  sampledThrough: number;
+}) {
   const missing = gaps.filter(gap => gap === "missing").length;
   const outside = gaps.filter(gap => gap === "outside").length;
   const pending = gaps.filter(gap => gap === "pending").length;
-  if (mean == null) return <div className="npu-live-no-history">{missing ? "排期内暂无有效采样" : "等待排期内样本"}</div>;
   const unit = 240 / values.length, width = Math.min(4.25, unit*.52);
   const bands = ["low", "mid", "high", "peak", "gap"];
   const paths = bands.map(() => "");
@@ -42,7 +46,7 @@ function History({values, mean, gaps}: Pick<LiveView["machines"][number], "value
       ? `M${(x+width/2).toFixed(2)},2v42`
       : `M${x.toFixed(2)},${(44-height).toFixed(2)}h${width.toFixed(2)}v${height.toFixed(2)}h-${width.toFixed(2)}Z`;
   });
-  const description = [`近 1 小时卡占用，平均 ${Math.round(mean)}%，从过去到现在`,
+  const description = ["近 1 小时卡占用，从过去到现在", mean !== null ? `平均 ${Math.round(mean)}%` : "",
     missing ? `${missing} 段排期内缺样` : "",
     outside ? `${outside} 段无本组排期` : "",
     pending ? `${pending} 段待同步` : ""].filter(Boolean).join("，");
@@ -50,8 +54,23 @@ function History({values, mean, gaps}: Pick<LiveView["machines"][number], "value
     <svg viewBox="0 0 240 46" preserveAspectRatio="none" role="img" aria-label={description}>
       <title>{description}</title><path className="npu-live-grid" d="M0 2H240 M0 23H240 M0 44H240"/>
       {paths.map((p,i) => p && <path key={bands[i]} className={`npu-live-${bands[i]}`} d={p}/>)}
+      {gaps.map((gap, i) => {
+        if (!gap) return null;
+        const left = unit * i;
+        const center = left + unit / 2;
+        const start = sampledThrough - 60 * minuteMs + i * 5 * minuteMs;
+        return <g key={i} className={`npu-live-slot-${gap}`}>
+          {gap === "outside" && <path d={`M${center - 4},42h8`}/>}
+          {gap === "pending" && <circle cx={center} cy="41" r="3"/>}
+          <rect x={left} y="0" width={unit} height="46" fill="transparent" stroke="none">
+            <title>{slotTime.format(start)}–{slotTime.format(start + 5 * minuteMs)} {gapLabels[gap]}</title>
+          </rect>
+        </g>;
+      })}
     </svg>
-    <div><strong>{Math.round(mean)}%</strong><small>{missing ? "平均使用率 · 排期内部分缺样" : "最近平均使用率"}</small></div>
+    <div><strong>{mean === null ? "—" : `${Math.round(mean)}%`}</strong><small>{mean === null
+      ? missing ? "排期内暂无有效采样" : "等待排期内样本"
+      : missing ? "平均使用率 · 排期内部分缺样" : "最近平均使用率"}</small></div>
   </div>;
 }
 
@@ -93,10 +112,13 @@ function demoSamples(state: PublicState, now: number) {
   return {resources, bookings, days, latest};
 }
 
+type CachedLiveView = { view: LiveView; receivedAt: number; serverTimeAtReceipt: number };
+
 export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
   state: PublicState; demo: boolean; groupId: string; onDetail: (id: string)=>void;
 }) {
-  const [results, setResults] = useState(() => new Map<string, LiveView>());
+  const [results, setResults] = useState(() => new Map<string, CachedLiveView>());
+  const [, updateClock] = useState(0);
   const [failure, setFailure] = useState<{group: string; message: string} | null>(null);
   const allowed = canViewNpuLive(state.actor);
   const demoState = demo ? state : null;
@@ -106,6 +128,7 @@ export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
     let timer: ReturnType<typeof setTimeout>;
     async function refresh(){
       try{
+        const requestedAt = performance.now();
         let view: LiveView;
         if (demoState) {
           const now = Date.now();
@@ -120,7 +143,11 @@ export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
           view = json;
         }
         if (!controller.signal.aborted) {
-          setResults(previous => new Map(previous).set(groupId, view));
+          const receivedAt = performance.now();
+          // The server timestamps the view during the request. Use the full
+          // round trip as an upper bound so a slow reply cannot extend a booking.
+          const serverTimeAtReceipt = view.now + receivedAt - requestedAt;
+          setResults(previous => new Map(previous).set(groupId, { view, receivedAt, serverTimeAtReceipt }));
           setFailure(null);
         }
       }catch(e){
@@ -135,9 +162,17 @@ export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
     return()=>{controller.abort();clearTimeout(timer);};
   },[allowed, groupId, demoState, state.revision]);
   const cached = allowed ? results.get(groupId) : undefined;
-  const view = cached && Date.now() - cached.now < minuteMs ? cached : null;
+  const cacheAge = cached ? performance.now() - cached.receivedAt : 0;
+  const view = cached && cacheAge < minuteMs ? cached.view : null;
+  const now = cached ? cached.serverTimeAtReceipt + cacheAge : 0;
+  const rows = view?.machines.filter(row => row.until > now) ?? [];
+  const nextChange = Math.min(minuteMs - cacheAge, ...rows.map(row => (row.until - now) % minuteMs || minuteMs));
+  useEffect(() => {
+    if (!view) return;
+    const timer = setTimeout(() => updateClock(tick => tick + 1), Math.ceil(nextChange));
+    return () => clearTimeout(timer);
+  }, [view, nextChange]);
   const error = failure?.group === groupId ? failure.message : "";
-  const rows = view?.machines ?? [];
   const count = rows.filter(r=>r.status==="idle"&&!r.shared).length;
   const reportCounts = !rows.length || rows.some(r => r.cards.some(card => card !== "unknown"));
   return <section className="panel npu-live-panel" aria-labelledby="npu-live-title">
@@ -164,8 +199,8 @@ export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
                 <small>柜 {locationNumber(r.rack)} · {r.slot===null?"节点未登记":`节点 ${locationNumber(r.slot)}`}</small></th>
               <td><span className={`npu-live-state npu-live-state-${r.status}`}>{stateText[r.status]}</span>{(r.reason||r.shared)&&<small>{[r.reason,r.shared?"当前共用":""].filter(Boolean).join(" · ")}</small>}</td>
               <td>{r.idle==null?"未知":`${r.idle} / ${r.expected}`}{!!r.cards.length && <CardStrip cards={r.cards}/>}</td>
-              <td>{timestamp(r.until)}<small>还有 {Math.max(1,Math.ceil((r.until-view.now)/minuteMs))} 分钟</small></td>
-              <td><History values={r.values} mean={r.mean} gaps={r.gaps}/></td>
+              <td>{timestamp(r.until)}<small>还有 {Math.ceil((r.until - now) / minuteMs)} 分钟</small></td>
+              <td><History values={r.values} mean={r.mean} gaps={r.gaps} sampledThrough={view.now}/></td>
               <td>{r.sampledAt===null?<span className="npu-live-muted">未收到样本</span>:timestamp(r.sampledAt)}</td>
             </tr>)}</tbody>
           </table></div>}
