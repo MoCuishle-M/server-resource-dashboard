@@ -1,4 +1,4 @@
-import type { Booking, Resource, ResourceTimeBlock, WeeklyPlan } from "./types";
+import type { Booking, Resource, ResourceTimeBlock, UsageRequest, WeeklyPlan } from "./types";
 import { displayBookings, priorityRank } from "./priority";
 import { resourceStatusLabels } from "./resource-policy";
 import { timeBlockTitle } from "./resource-time-blocks";
@@ -58,9 +58,27 @@ export function layoutTimeBlocks(blocks: ResourceTimeBlock[], range: TimelineRan
   return layoutRanges(blocks.filter(b => b.status === "active").map(b => ({ ...b, startAt: b.displayStartAt ?? b.startAt })), range);
 }
 
+export const isDedicatedBooking = (booking: Booking) => booking.priority !== "normal" || booking.dedicated === true;
+
+export function dedicatedBooking(requests: UsageRequest[]) {
+  const byId = new Map(requests.map(request => [request.id, request]));
+  return (booking: Booking) => {
+    if (isDedicatedBooking(booking)) return true;
+    let id: string | undefined = booking.requestId;
+    const seen = new Set<string>();
+    while (id && !seen.has(id)) {
+      seen.add(id);
+      const request = byId.get(id);
+      if (request?.weeklySection) return request.weeklySection === "multi";
+      id = request?.sourceRequestId;
+    }
+    return false;
+  };
+}
+
 /** Show ordinary access for one group, retaining blockers from every group. */
 export function layoutGroupAvailability(resource: Resource, bookings: Booking[], groupId: string, range: TimelineRange,
-  isDedicated: (booking: Booking) => boolean = booking => booking.priority !== "normal") {
+  isDedicated: (booking: Booking) => boolean = isDedicatedBooking) {
   const start = Date.parse(range.startAt), end = Date.parse(range.endAt);
   if (!(end > start)) return [];
   const overlaps = (item: TimelineRange) => Date.parse(item.startAt) < end && Date.parse(item.endAt) > start;

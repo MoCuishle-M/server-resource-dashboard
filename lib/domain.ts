@@ -19,6 +19,7 @@ import { bookingAvailability, displacesBooking, priorityLabel, priorityRank } fr
 import { priorityAdjustmentPlan } from "./priority-adjustment";
 import { currentGroupContacts } from "./group-contact";
 import { currentTimeBlock, overlappingTimeBlocks, timeBlockTitle } from "./resource-time-blocks";
+import { dedicatedBooking } from "./schedule";
 export { priorityLabel, priorityRank } from "./priority";
 export class DomainError extends Error {
   constructor(
@@ -1161,11 +1162,14 @@ export function serializePublic(
   adminConfigured: boolean,
 ) {
   const weekly = visibleWeeklyState(s, actor);
+  const isDedicated = dedicatedBooking(s.requests);
   s = visibleResourceState(s, actor);
   return {
     ...s,
     ...weekly,
     groups: currentGroupContacts(s),
+    bookings: s.bookings.map(booking => booking.priority === "normal" && isDedicated(booking)
+      ? { ...booking, dedicated: true as const } : booking),
     settings: actor.role === "admin" ? s.settings : { announcement: s.settings.announcement, authorSignature: s.settings.authorSignature },
     invitations: actor.role === "admin" ? s.invitations : [],
     accounts:

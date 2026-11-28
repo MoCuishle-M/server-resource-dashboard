@@ -90,6 +90,8 @@ export type Booking = {
   endAt: string;
   purpose: string;
   priority: Priority;
+  // Projected for visible bookings whose full source request may be private.
+  dedicated?: true;
   status: "scheduled" | "cancelled" | "preempted" | "released";
   parentId: string;
   createdAt: string;

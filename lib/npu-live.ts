@@ -1,6 +1,6 @@
 import { DomainError } from "./domain";
-import { layoutGroupAvailability, shiftDate } from "./schedule";
-import { minuteMs, type NpuCard, type NpuDay, type NpuLatest } from "./npu-usage";
+import { dedicatedBooking, layoutGroupAvailability, shiftDate } from "./schedule";
+import { minuteMs, type NpuCard, type NpuDay, type NpuLatest, type NpuSnapshot } from "./npu-usage";
 import type { Actor, Booking, Resource, State } from "./types";
 
 const date = (at: number) => new Date(at + 8 * 60 * minuteMs).toISOString().slice(0, 10);
@@ -26,23 +26,6 @@ export function canViewNpuLive(actor: Actor) {
 export function liveGroups(state: Pick<State, "groups">, actor: Actor) {
   if (!canViewNpuLive(actor)) throw new DomainError(actor.userId ? 403 : 401, "请登录并加入使用组");
   return state.groups.filter(g => actor.role === "admin" || g.id === actor.groupId).map(({id, name}) => ({id, name}));
-}
-
-export function dedicatedBooking(requests: State["requests"]) {
-  const byId = new Map(requests.map(req => [req.id, req]));
-  return (booking: Booking) => {
-    // The existing timeline reserves all elevated intervals for their task.
-    if (booking.priority !== "normal") return true;
-    let id: string | undefined = booking.requestId;
-    const seen = new Set<string>();
-    while (id && !seen.has(id)) {
-      seen.add(id);
-      const request = byId.get(id);
-      if (request?.weeklySection) return request.weeklySection === "multi";
-      id = request?.sourceRequestId;
-    }
-    return false;
-  };
 }
 
 type Window = { start: number; end: number };
@@ -121,21 +104,29 @@ export function liveHistory(days: NpuDay[], windows: Window[], now: number, hour
     mean: total.observed ? 100*total.occupied/total.observed : null};
 }
 
+export type CardState = "idle" | "busy" | "fault" | "unknown";
+
+export function readLiveCards(snapshot: NpuSnapshot | undefined, expected: number, now: number) {
+  const sampledAt = snapshot?.at ?? null;
+  const fresh = !!snapshot && snapshot.at <= now && now - snapshot.at <= 3 * minuteMs;
+  const cards: CardState[] = fresh ? snapshot.cards.map(c =>
+    c.state === "idle" ? "idle" : busy.has(c.state) ? "busy" : c.state === "fault" ? "fault" : "unknown") : [];
+  const idle = fresh ? cards.filter(s => s === "idle").length : null;
+  const faults = cards.filter(s => s === "fault").length;
+  const incomplete = !expected || cards.length !== expected || cards.includes("unknown");
+  const status: "idle" | "busy" | "uncertain" = !fresh || incomplete || faults ? "uncertain" : idle === expected ? "idle" : "busy";
+  return { sampledAt, fresh, cards, idle, faults, incomplete, status };
+}
+
 export function liveView(state: State, actor: Actor, groupId: string, now: number, hours: number, days: NpuDay[], latest: NpuLatest[]) {
   const {groups, group, selected} = liveScope(state, actor, groupId);
   const candidates = liveCandidates(state, actor, selected, now, now-hours*60*minuteMs);
   const latestById = new Map(latest.map(row => [row.resourceId, row]));
   const machines = candidates.map(({resource, rack, slot, until, groupNames, shared, windows}) => {
     const snap = latestById.get(resource.id);
-    const sampledAt = snap?.snapshot.at ?? null;
-    const fresh = sampledAt !== null && sampledAt <= now && now-sampledAt <= 3*minuteMs;
     const history = days.filter(d => d.resourceId === resource.id);
     const expected = Math.max(snap?.expected ?? 0, ...history.map(d => d.expected));
-    const cards = fresh && snap ? snap.snapshot.cards.map(c => c.state === "idle" ? "idle" : busy.has(c.state) ? "busy" : c.state === "fault" ? "fault" : "unknown") : [];
-    const idle = fresh ? cards.filter(s => s === "idle").length : null;
-    const faults = cards.filter(s => s === "fault").length;
-    const occupied = cards.filter(s => s === "busy").length;
-    const status: "uncertain" | "busy" | "idle" = !fresh || !expected || (idle ?? 0)+occupied !== expected ? "uncertain" : occupied ? "busy" : "idle";
+    const { sampledAt, fresh, cards, idle, faults, status } = readLiveCards(snap?.snapshot, expected, now);
     const reason = !fresh ? sampledAt === null ? "暂无线上样本" : "样本已过期" : status === "uncertain" ? "有卡异常或缺测" : "";
     return {id: resource.id, ip: resource.ip, rack, slot, until, groupNames, shared, sampledAt, expected,
       cards, idle, faults, status, reason, ...liveHistory(history, windows, now, hours)};

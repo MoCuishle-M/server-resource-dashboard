@@ -1378,7 +1378,7 @@ tbody tr:hover {
 .timeline-track .timeline-booking:focus-visible { z-index: 6; }
 .timeline-track .timeline-availability { font-weight: 700; color: inherit; }
 .priority-swatch { width: 20px; height: 12px; border: 1px solid; border-radius: 2px; display: inline-block; }
-.priority-swatch.normal { background: #eef5ff; border-color: #8dafd5; }
+.timeline-track .timeline-booking.priority-normal, .priority-swatch.normal { background: #eef5ff; border-color: #8dafd5; }
 .timeline-track .timeline-ordinary.is-available, .priority-swatch.ordinary-available { background: #e6f5ec; border-color: #5a9f77; color: #286044; }
 .timeline-track .timeline-ordinary.is-unavailable, .priority-swatch.ordinary-unavailable { background: #edf0f3; border-color: #b5bec8; color: #667383; }
 .timeline-track .timeline-ordinary .timeline-summary { color: inherit; }

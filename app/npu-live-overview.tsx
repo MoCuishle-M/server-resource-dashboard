@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { chinaDate } from "@/lib/domain";
-import { canViewNpuLive, liveLocation, liveView, type LiveView } from "@/lib/npu-live";
+import { canViewNpuLive, liveLocation, liveView, readLiveCards, type CardState, type LiveView } from "@/lib/npu-live";
 import { minuteMs, type NpuAnalysis, type NpuDay, type NpuLatest } from "@/lib/npu-usage";
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import type { PublicState, Resource } from "@/lib/types";
@@ -14,7 +14,6 @@ const fmt = new Intl.DateTimeFormat("zh-CN", {timeZone: "Asia/Shanghai", month: 
 const timestamp = (at: number) => fmt.format(at);
 const stateText = {idle: "整机空闲", busy: "有卡占用", uncertain: "状态待确认"};
 const locationNumber = (n: number) => String(n).padStart(2, "0");
-type CardState = "idle" | "busy" | "fault" | "unknown";
 
 function CardStrip({cards}: {cards: CardState[]}) {
   const labels = {idle: "空闲", busy: "占用", fault: "故障", unknown: "未知"};
@@ -158,16 +157,16 @@ export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
   </section>;
 }
 
-const snapshotState: Record<string, CardState> = {
-  idle: "idle", active: "busy", occupied_low: "busy", occupied_unknown: "busy", fault: "fault",
-};
+type FleetSnapshot = NonNullable<NpuAnalysis["machines"][number]["snapshot"]>;
 
 function demoFleetLatest(state: PublicState, now: number) {
-  const latest = new Map(demoSamples(state, now).latest.map(row => [row.resourceId, row.snapshot]));
+  const latest = new Map<string, FleetSnapshot>(demoSamples(state, now).latest.map(row =>
+    [row.resourceId, { ...row.snapshot, expected: row.expected }]));
   state.resources.filter(resource => resource.id.startsWith("demo-fleet-")).forEach((resource, i) => {
     if (i % 7 === 5) return;
     const occupied = (i * 5) % 9;
     latest.set(resource.id, {
+      expected: 8,
       at: now - (i % 7 === 6 ? 9 : 1) * minuteMs,
       cards: Array.from({length: 8}, (_, card) => ({
         key: `${card}-0`, state: i % 11 === 3 && card === 0 ? "fault" : card < occupied ? "active" : "idle",
@@ -178,24 +177,23 @@ function demoFleetLatest(state: PublicState, now: number) {
   return latest;
 }
 
-function fleetReading(resource: Resource, snapshot: NpuLatest["snapshot"] | undefined, now: number) {
-  const fresh = !!snapshot && snapshot.at <= now && now - snapshot.at <= 3 * minuteMs;
-  const cards = fresh ? snapshot.cards.map(card => snapshotState[card.state] ?? "unknown") : [];
-  const idle = cards.filter(card => card === "idle").length;
-  const expected = Number(resource.type.match(/(\d+)\s*卡/)?.[1]) || 0;
-  const uncertain = cards.length === 0 || cards.length < expected || cards.includes("unknown");
+function fleetReading(resource: Resource, snapshot: FleetSnapshot | undefined, now: number) {
+  const expected = snapshot?.expected ?? 0;
+  const reading = readLiveCards(snapshot, expected, now);
+  const { cards, fresh, idle, incomplete, faults } = reading;
   const text = !snapshot ? "未收到样本" : !fresh ? "样本已过期" :
-    !cards.length || cards.every(card => card === "unknown") ? "卡状态未知" : `空闲 ${idle} 张`;
+    !expected || cards.every(card => card === "unknown") ? "卡状态未知" :
+    incomplete ? `空闲 ${idle} / ${expected} · 样本不全` : `空闲 ${idle} 张`;
   const status = resource.status === "available" ? "" : resourceStatusLabels[resource.status];
-  return {cards, text, status, fresh, uncertain, at: snapshot?.at,
-    free: resource.status === "available" && !uncertain && cards.length === idle,
-    fault: resource.status === "fault" || cards.includes("fault")};
+  return {cards, text, status, fresh, uncertain: !fresh || incomplete, at: snapshot?.at,
+    free: resource.status === "available" && reading.status === "idle",
+    fault: resource.status === "fault" || faults > 0};
 }
 
 export function NpuFleetOverview({state, demo, onDetail}: {
   state: PublicState; demo: boolean; onDetail: (id: string)=>void;
 }) {
-  const [data, setData] = useState<{now: number; latest: Map<string, NpuLatest["snapshot"]>} | null>(null);
+  const [data, setData] = useState<{now: number; latest: Map<string, FleetSnapshot>} | null>(null);
   const [error, setError] = useState(false);
   const [expandedRack, setExpandedRack] = useState<number | null>(null);
   const allowed = state.actor.role === "admin";

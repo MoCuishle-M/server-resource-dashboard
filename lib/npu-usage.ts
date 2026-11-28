@@ -161,7 +161,8 @@ export function analyzeUsage(
       }
     }
     for (const key of Object.keys(fleet) as (keyof Totals)[]) fleet[key] += machine[key];
-    machineRows.push({ id: resource.id, name: resource.name, ...machine, snapshot: retired ? null : host.snapshot });
+    const snapshot = !retired && host.snapshot ? { ...host.snapshot, expected: host.expected } : null;
+    machineRows.push({ id: resource.id, name: resource.name, ...machine, snapshot });
     if (heatmap) groupHeatmap.push({ id: resource.id, name: resource.name, values: heatmap });
     if (trend) machineTrend = trend;
   }

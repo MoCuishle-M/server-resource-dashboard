@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { emptyState } from "../lib/domain";
+import { emptyState, serializePublic } from "../lib/domain";
 import { liveHistory, liveView, readLive } from "../lib/npu-live";
+import { layoutGroupAvailability } from "../lib/schedule";
 import type { Actor, Booking, Resource, UsageRequest } from "../lib/types";
 
 const base = Date.parse("2026-11-26T00:00:00+08:00");
@@ -18,7 +19,7 @@ const booking = (id: string, resourceId: string, from: number, until: number, gr
   purpose:"", parentId:"", createdAt:iso(0), updatedAt:iso(0),
 });
 const request = (id: string, weeklySection?: "day"|"multi", sourceRequestId?: string) =>
-  ({id, weeklySection, sourceRequestId} as UsageRequest);
+  ({id, weeklySection, sourceRequestId, resourceIds: []} as unknown as UsageRequest);
 const groups = ["g1","g2"].map(id=>({id,name:id,contactName:"",employeeId:""}));
 const now = at(1200);
 const state = {...emptyState(), groups, resources:[makeResource("r1"),makeResource("r2"),makeResource("r3",true),makeResource("r4")],
@@ -35,6 +36,19 @@ test("ordinary availability stops at a same-group multi-node handoff and exclude
   assert.deepEqual(data.machines.map(x=>[x.id,x.until,x.status]),[["r1",at(1260),"uncertain"]]);
   assert.equal(data.machines[0].idle,null);
   assert.deepEqual(liveView(state,actor,"g1",at(1260),1,[],[]).machines.map(x=>x.id),["r4"]);
+});
+
+test("the visible timeline uses the same handoff even when the multi-node source request is private", () => {
+  const mixed = {...state, requests: state.requests.map(r => r.id === "source"
+    ? {...r, resourceIds: ["r1", "r3"]} : r)};
+  const visible = serializePublic(mixed, actor, iso(1200), true);
+  assert(!visible.requests.some(r => r.id === "source"));
+  assert(!visible.bookings.some(b => b.resourceId === "r3"));
+  const timeline = layoutGroupAvailability(visible.resources[0], visible.bookings, "g1",
+    {startAt: iso(1200), endAt: iso(1380)});
+  assert.deepEqual(timeline.map(row => [row.endAt, row.available, row.reason]),
+    [[iso(1260), true, ""], [iso(1380), false, "多机任务占用"]]);
+  assert.equal(liveView(mixed, actor, "g1", now, 1, [], []).machines[0].until, Date.parse(timeline[0].endAt));
 });
 
 test("anonymous, unassigned and cross-group requests cannot reach telemetry storage", async () =>{
