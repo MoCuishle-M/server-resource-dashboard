@@ -9,13 +9,18 @@
   stroke-width: 1.15;
   stroke-dasharray: 2 3;
 }
-.npu-live-no-history {
-  padding: .65rem;
-  border: 1px dashed #cdd9e4;
-  border-radius: 5px;
-  background: #f7f9fb;
-  text-align: center;
-  color: #52677b;
+.npu-live-slot-outside path {
+  fill: none;
+  stroke: #8093a7;
+  stroke-width: 2;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.npu-live-slot-pending circle {
+  fill: none;
+  stroke: #a35d16;
+  stroke-width: 1.6;
+  vector-effect: non-scaling-stroke;
 }
 .npu-fleet-panel { margin-bottom: 24px; }
 .npu-fleet-panel .section-heading { flex-wrap: wrap; padding-bottom: 12px; }

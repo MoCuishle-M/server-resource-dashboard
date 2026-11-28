@@ -11,6 +11,7 @@ import "./npu-live.css";
 
 const fmt = new Intl.DateTimeFormat("zh-CN", {timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit",
   hour: "2-digit", minute: "2-digit", hourCycle: "h23"});
+const slotTime = new Intl.DateTimeFormat("zh-CN", {timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23"});
 const timestamp = (at: number) => fmt.format(at);
 const stateText = {idle: "整机空闲", busy: "有卡占用", uncertain: "状态待确认"};
 const locationNumber = (n: number) => String(n).padStart(2, "0");
@@ -26,26 +27,50 @@ function CardStrip({cards}: {cards: CardState[]}) {
   </span>;
 }
 
-function History({values, mean}: {values: (number|null)[]; mean: number|null}) {
-  if (mean == null) return <div className="npu-live-no-history">近 1 小时暂无数据</div>;
-  const missing = values.filter(value => value === null).length;
+const gapLabels = { missing: "排期内缺样", outside: "无本组排期", pending: "待同步" };
+
+function History({values, mean, gaps, sampledThrough}: Pick<LiveView["machines"][number], "values" | "mean" | "gaps"> & {
+  sampledThrough: number;
+}) {
+  const missing = gaps.filter(gap => gap === "missing").length;
+  const outside = gaps.filter(gap => gap === "outside").length;
+  const pending = gaps.filter(gap => gap === "pending").length;
   const unit = 240 / values.length, width = Math.min(4.25, unit*.52);
   const bands = ["low", "mid", "high", "peak", "gap"];
   const paths = bands.map(() => "");
   values.forEach((value, i) => {
+    if (value === null && gaps[i] !== "missing") return;
     const x = unit*i+(unit-width)/2, height = value === null ? 42 : Math.max(3, value*.42);
     const band = value === null ? 4 : Math.min(3, Math.floor(value/25));
     paths[band] += value === null
       ? `M${(x+width/2).toFixed(2)},2v42`
       : `M${x.toFixed(2)},${(44-height).toFixed(2)}h${width.toFixed(2)}v${height.toFixed(2)}h-${width.toFixed(2)}Z`;
   });
-  const description = `近 1 小时卡占用，平均 ${Math.round(mean)}%，从过去到现在${missing ? `，${missing} 段缺样本` : ""}`;
+  const description = ["近 1 小时卡占用，从过去到现在", mean !== null ? `平均 ${Math.round(mean)}%` : "",
+    missing ? `${missing} 段排期内缺样` : "",
+    outside ? `${outside} 段无本组排期` : "",
+    pending ? `${pending} 段待同步` : ""].filter(Boolean).join("，");
   return <div className="npu-live-plot">
     <svg viewBox="0 0 240 46" preserveAspectRatio="none" role="img" aria-label={description}>
       <title>{description}</title><path className="npu-live-grid" d="M0 2H240 M0 23H240 M0 44H240"/>
       {paths.map((p,i) => p && <path key={bands[i]} className={`npu-live-${bands[i]}`} d={p}/>)}
+      {gaps.map((gap, i) => {
+        if (!gap) return null;
+        const left = unit * i;
+        const center = left + unit / 2;
+        const start = sampledThrough - 60 * minuteMs + i * 5 * minuteMs;
+        return <g key={i} className={`npu-live-slot-${gap}`}>
+          {gap === "outside" && <path d={`M${center - 4},42h8`}/>}
+          {gap === "pending" && <circle cx={center} cy="41" r="3"/>}
+          <rect x={left} y="0" width={unit} height="46" fill="transparent" stroke="none">
+            <title>{slotTime.format(start)}–{slotTime.format(start + 5 * minuteMs)} {gapLabels[gap]}</title>
+          </rect>
+        </g>;
+      })}
     </svg>
-    <div><strong>{Math.round(mean)}%</strong><small>{missing ? "平均使用率 · 部分缺样" : "最近平均使用率"}</small></div>
+    <div><strong>{mean === null ? "—" : `${Math.round(mean)}%`}</strong><small>{mean === null
+      ? missing ? "排期内暂无有效采样" : "等待排期内样本"
+      : missing ? "平均使用率 · 排期内部分缺样" : "最近平均使用率"}</small></div>
   </div>;
 }
 
@@ -87,49 +112,76 @@ function demoSamples(state: PublicState, now: number) {
   return {resources, bookings, days, latest};
 }
 
+type CachedLiveView = { view: LiveView; receivedAt: number; serverTimeAtReceipt: number };
+
 export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
   state: PublicState; demo: boolean; groupId: string; onDetail: (id: string)=>void;
 }) {
-  const [result,setResult] = useState<LiveView|null>(null),[error,setError] = useState("");
+  const [results, setResults] = useState(() => new Map<string, CachedLiveView>());
+  const [, updateClock] = useState(0);
+  const [failure, setFailure] = useState<{group: string; message: string} | null>(null);
   const allowed = canViewNpuLive(state.actor);
-  const selectedGroup = state.actor.role === "admin" || state.actor.groupId === groupId ? groupId : "";
+  const demoState = demo ? state : null;
   useEffect(()=>{
-    if(!allowed||!selectedGroup)return;
+    if (!allowed || !groupId) return;
     const controller=new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function refresh(){
       try{
-        if(demo){
+        const requestedAt = performance.now();
+        let view: LiveView;
+        if (demoState) {
           const now = Date.now();
-          const {resources, bookings, days, latest} = demoSamples(state, now);
-          setResult(liveView({...state,resources,bookings}, state.actor, selectedGroup, now, 1, days, latest));
+          const {resources, bookings, days, latest} = demoSamples(demoState, now);
+          view = liveView({...demoState,resources,bookings}, demoState.actor, groupId, now, 1, days, latest);
         }else{
-          const query=new URLSearchParams({group:selectedGroup});
+          const query=new URLSearchParams({group:groupId});
           const response=await fetch(`/api/npu-live?${query}`,{signal:controller.signal,cache:"no-store"});
           const json=await response.json() as LiveView & {error?: string};
           if(!response.ok)throw new Error(typeof json.error==="string"?json.error:"载入机器状态失败");
-          if(!controller.signal.aborted)setResult(json);
+          if (json.group !== groupId) throw new Error("未收到所选使用组的机器状态");
+          view = json;
         }
-        if(!controller.signal.aborted)setError("");
+        if (!controller.signal.aborted) {
+          const receivedAt = performance.now();
+          // The server timestamps the view during the request. Use the full
+          // round trip as an upper bound so a slow reply cannot extend a booking.
+          const serverTimeAtReceipt = view.now + receivedAt - requestedAt;
+          setResults(previous => new Map(previous).set(groupId, { view, receivedAt, serverTimeAtReceipt }));
+          setFailure(null);
+        }
       }catch(e){
-        if(!controller.signal.aborted){setResult(null);setError(e instanceof Error?e.message:"载入机器状态失败");}
+        if (!controller.signal.aborted) {
+          setFailure({group: groupId, message: e instanceof Error ? e.message : "载入机器状态失败"});
+        }
       } finally{
         if(!controller.signal.aborted)timer=setTimeout(refresh,30_000);
       }
     }
     void refresh();
     return()=>{controller.abort();clearTimeout(timer);};
-  },[allowed,selectedGroup,demo,state]);
-  if(!allowed)return null;
-  const view = result?.group === selectedGroup ? result : null;
-  const rows = view?.machines ?? [];
+  },[allowed, groupId, demoState, state.revision]);
+  const cached = allowed ? results.get(groupId) : undefined;
+  const cacheAge = cached ? performance.now() - cached.receivedAt : 0;
+  const view = cached && cacheAge < minuteMs ? cached.view : null;
+  const now = cached ? cached.serverTimeAtReceipt + cacheAge : 0;
+  const rows = view?.machines.filter(row => row.until > now) ?? [];
+  const nextChange = Math.min(minuteMs - cacheAge, ...rows.map(row => (row.until - now) % minuteMs || minuteMs));
+  useEffect(() => {
+    if (!view) return;
+    const timer = setTimeout(() => updateClock(tick => tick + 1), Math.ceil(nextChange));
+    return () => clearTimeout(timer);
+  }, [view, nextChange]);
+  const error = failure?.group === groupId ? failure.message : "";
   const count = rows.filter(r=>r.status==="idle"&&!r.shared).length;
   const reportCounts = !rows.length || rows.some(r => r.cards.some(card => card !== "unknown"));
   return <section className="panel npu-live-panel" aria-labelledby="npu-live-title">
     <div className="npu-live-header">
       <h2 id="npu-live-title">当前用机</h2>
     </div>
-    {!selectedGroup ? <p className="npu-live-prompt">{groupId ? "当前用机仅向本组开放。" : "选择使用组后查看当前用机。"}</p> : <div>
+    {!allowed ? <p className="npu-live-prompt">{demo ? "登录后可查看所选使用组的机器状态。" :
+      <><a href="/signin-with-chatgpt?return_to=/" target="_top">登录</a>后可查看所选使用组的机器状态。</>}</p> :
+    !groupId ? <p className="npu-live-prompt">选择使用组后查看当前用机。</p> : <div>
       {error && <p role="alert">{error}</p>}
       {!error&&!view&&<p className="npu-live-prompt" role="status">正在读取机器状态…</p>}
       {view&&<>
@@ -147,8 +199,8 @@ export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
                 <small>柜 {locationNumber(r.rack)} · {r.slot===null?"节点未登记":`节点 ${locationNumber(r.slot)}`}</small></th>
               <td><span className={`npu-live-state npu-live-state-${r.status}`}>{stateText[r.status]}</span>{(r.reason||r.shared)&&<small>{[r.reason,r.shared?"当前共用":""].filter(Boolean).join(" · ")}</small>}</td>
               <td>{r.idle==null?"未知":`${r.idle} / ${r.expected}`}{!!r.cards.length && <CardStrip cards={r.cards}/>}</td>
-              <td>{timestamp(r.until)}<small>还有 {Math.max(1,Math.ceil((r.until-view.now)/minuteMs))} 分钟</small></td>
-              <td><History values={r.values} mean={r.mean}/></td>
+              <td>{timestamp(r.until)}<small>还有 {Math.ceil((r.until - now) / minuteMs)} 分钟</small></td>
+              <td><History values={r.values} mean={r.mean} gaps={r.gaps} sampledThrough={view.now}/></td>
               <td>{r.sampledAt===null?<span className="npu-live-muted">未收到样本</span>:timestamp(r.sampledAt)}</td>
             </tr>)}</tbody>
           </table></div>}

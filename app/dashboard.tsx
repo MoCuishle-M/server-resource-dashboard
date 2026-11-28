@@ -1411,7 +1411,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                     rememberGroup={visitor}
                     weeklyPlans={s.weeklyPlans}
                     now={clock}
-                    renderCurrentUse={groupId => <NpuLiveOverview key={groupId} state={s} demo={demo} groupId={groupId} onDetail={id => {
+                    renderCurrentUse={groupId => <NpuLiveOverview key={`${actor.userId}/${actor.role}`} state={s} demo={demo} groupId={groupId} onDetail={id => {
                       const resource = resources.find(r => r.id === id);
                       if (resource) setDetail(resource);
                     }}/>}

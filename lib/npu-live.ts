@@ -20,12 +20,12 @@ export function liveLocation(resource: Pick<Resource, "name" | "rack" | "zone">,
 }
 
 export function canViewNpuLive(actor: Actor) {
-  return !!actor.userId && (actor.role === "admin" || actor.role !== "visitor" && !!actor.groupId);
+  return !!actor.userId && actor.role !== "visitor";
 }
 
 export function liveGroups(state: Pick<State, "groups">, actor: Actor) {
-  if (!canViewNpuLive(actor)) throw new DomainError(actor.userId ? 403 : 401, "请登录并加入使用组");
-  return state.groups.filter(g => actor.role === "admin" || g.id === actor.groupId).map(({id, name}) => ({id, name}));
+  if (!canViewNpuLive(actor)) throw new DomainError(actor.userId ? 403 : 401, "请登录后查看当前用机");
+  return state.groups.map(({id, name}) => ({id, name}));
 }
 
 type Window = { start: number; end: number };
@@ -34,9 +34,12 @@ type LiveGroup = ReturnType<typeof liveGroups>[number];
 function liveScope(state: Pick<State, "groups">, actor: Actor, groupId: string) {
   const groups = liveGroups(state, actor);
   const group = groupId || (actor.role === "admin" ? allLiveGroups : actor.groupId);
-  if (actor.role === "admin" && group === allLiveGroups) return {groups, group, selected: groups};
+  if (group === allLiveGroups) {
+    if (actor.role !== "admin") throw new DomainError(403, "请选择单个使用组");
+    return {groups, group, selected: groups};
+  }
   const selected = groups.filter(g => g.id === group);
-  if (groupId && !selected.length) throw new DomainError(403, "无权查看该分组");
+  if (!selected.length) throw new DomainError(400, "请选择有效的使用组");
   return {groups, group, selected};
 }
 
@@ -82,6 +85,9 @@ function liveCandidates(state: Pick<State, "resources" | "bookings" | "requests"
 
 export function liveHistory(days: NpuDay[], windows: Window[], now: number, hours: number) {
   const start = now - hours * 60 * minuteMs, step = (hours === 5 ? 10 : 5) * minuteMs;
+  // The uploader publishes completed minutes, so allow the current interval and
+  // the preceding two minutes to arrive before labelling a gap as missing.
+  const due = Math.floor(now / minuteMs) * minuteMs - 2 * minuteMs;
   const bins = Array.from({length: (now-start)/step}, () => ({observed: 0, occupied: 0}));
   for (const day of days) {
     const base = dayStart(day.day);
@@ -100,8 +106,15 @@ export function liveHistory(days: NpuDay[], windows: Window[], now: number, hour
     }
   }
   const total = bins.reduce((p, b) => ({observed: p.observed+b.observed, occupied: p.occupied+b.occupied}), {observed: 0, occupied: 0});
+  const gaps = bins.map((bin, i) => {
+    if (bin.observed) return null;
+    const begin = start + i * step;
+    const end = begin + step;
+    if (windows.some(w => Math.max(begin, w.start) < Math.min(end, w.end, due))) return "missing" as const;
+    return windows.some(w => Math.max(begin, w.start) < Math.min(end, w.end)) ? "pending" as const : "outside" as const;
+  });
   return {values: bins.map(b => b.observed ? 100*b.occupied/b.observed : null),
-    mean: total.observed ? 100*total.occupied/total.observed : null};
+    mean: total.observed ? 100*total.occupied/total.observed : null, gaps};
 }
 
 export type CardState = "idle" | "busy" | "fault" | "unknown";
@@ -121,6 +134,11 @@ export function readLiveCards(snapshot: NpuSnapshot | undefined, expected: numbe
 export function liveView(state: State, actor: Actor, groupId: string, now: number, hours: number, days: NpuDay[], latest: NpuLatest[]) {
   const {groups, group, selected} = liveScope(state, actor, groupId);
   const candidates = liveCandidates(state, actor, selected, now, now-hours*60*minuteMs);
+  return buildLiveView(candidates, groups, group, now, hours, days, latest);
+}
+
+function buildLiveView(candidates: ReturnType<typeof liveCandidates>, groups: LiveGroup[], group: string,
+                       now: number, hours: number, days: NpuDay[], latest: NpuLatest[]) {
   const latestById = new Map(latest.map(row => [row.resourceId, row]));
   const machines = candidates.map(({resource, rack, slot, until, groupNames, shared, windows}) => {
     const snap = latestById.get(resource.id);
@@ -135,12 +153,13 @@ export function liveView(state: State, actor: Actor, groupId: string, now: numbe
 }
 
 export async function readLive(db: D1Database, state: State, actor: Actor, url: URL, now: number) {
-  const {group, selected} = liveScope(state, actor, url.searchParams.get("group") ?? "");
+  const {groups, group, selected} = liveScope(state, actor, url.searchParams.get("group") ?? "");
   const hours = Number(url.searchParams.get("hours") ?? 1);
   if (![1,3,5].includes(hours)) throw new DomainError(400, "请选择近 1、3 或 5 小时");
   const since = now-hours*60*minuteMs;
-  const ids = liveCandidates(state, actor, selected, now, since).map(row => row.resource.id);
-  if (!ids.length) return liveView(state, actor, group, now, hours, [], []);
+  const candidates = liveCandidates(state, actor, selected, now, since);
+  const ids = candidates.map(row => row.resource.id);
+  if (!ids.length) return buildLiveView(candidates, groups, group, now, hours, [], []);
   const params = ids.map(() => "?").join(",");
   const [days, latest] = await Promise.all([
     db.prepare(`SELECT resource_id, day, expected, samples FROM npu_days WHERE id >= ? AND id < ? AND resource_id IN (${params})`)
@@ -149,7 +168,7 @@ export async function readLive(db: D1Database, state: State, actor: Actor, url: 
     db.prepare(`SELECT resource_id, expected, sampled_at, cards FROM npu_latest WHERE resource_id IN (${params})`)
       .bind(...ids).all<{resource_id: string; expected: number; sampled_at: number; cards: string}>(),
   ]);
-  return liveView(state, actor, group, now, hours, days.results.map(r => ({resourceId: r.resource_id, day: r.day, expected: r.expected, samples: JSON.parse(r.samples)})),
+  return buildLiveView(candidates, groups, group, now, hours, days.results.map(r => ({resourceId: r.resource_id, day: r.day, expected: r.expected, samples: JSON.parse(r.samples)})),
     latest.results.map(r => ({resourceId: r.resource_id, expected: r.expected, snapshot: {at: r.sampled_at, cards: JSON.parse(r.cards) as NpuCard[]}})));
 }
 
