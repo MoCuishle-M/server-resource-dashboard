@@ -32,6 +32,7 @@ try {
   await page.goto(base);
   await expect(page.getByRole("heading", { name: /^使用排期/ })).toBeVisible();
   await expect(group).toHaveValue("");
+  await expect(page.getByRole("region", { name: "当前用机" })).toContainText("后可查看所选使用组的机器状态");
   await group.selectOption("g1");
   const visibleRows = await page.locator(".schedule-table tbody tr").count();
   assert(visibleRows > 0, "The selected sample team has scheduled resources");
@@ -102,9 +103,16 @@ try {
   const latest = [{ resourceId: resource.id, expected: 8, snapshot: { at: now - 30_000,
     cards: Array.from({ length: 4 }, (_, i) => ({ key: `${i}-0`, state: "idle", util: 0, hbm: 0 })) } }];
   const liveContext = await browser.newContext();
-  await liveContext.route("**/api/state", route => route.fulfill({ json: serializePublic(state, demoAdmin, at("10:45"), true) }));
+  let liveActor = demoAdmin;
+  let delayGroup = "";
+  let completeDelayedResponse;
+  await liveContext.route("**/api/state", route => route.fulfill({ json: serializePublic(state, liveActor, at("10:45"), true) }));
   await liveContext.route("**/api/npu-usage?*", route => route.fulfill({ json: analyzeUsage(state, [], latest, usageRange(day, day, now)) }));
-  await liveContext.route("**/api/npu-live?*", route => route.fulfill({ json: liveView(state, demoAdmin, groupId, now, 1, [], latest) }));
+  await liveContext.route("**/api/npu-live?*", async route => {
+    const requestedGroup = new URL(route.request().url()).searchParams.get("group");
+    if (requestedGroup === delayGroup) await new Promise(resolve => { completeDelayedResponse = resolve; });
+    await route.fulfill({ json: liveView(state, liveActor, requestedGroup, now, 1, [], latest) });
+  });
   const livePage = await liveContext.newPage();
   const liveErrors = [];
   livePage.on("pageerror", error => liveErrors.push(error.message));
@@ -122,9 +130,24 @@ try {
   await expect(currentUse.getByText(/11:00/)).toBeVisible();
   await expect(livePage.locator(".timeline-ordinary.is-available")).toHaveAttribute("aria-label", /10:00 — .*11:00$/);
   await expect(livePage.getByRole("button", { name: /普通时段不可用.*11:00.*11:50.*多机任务占用/ })).toBeVisible();
+  liveActor = { ...visitor, userId: "signed-in-member", role: "member", displayName: "普通用户" };
+  await livePage.reload();
+  await livePage.getByRole("button", { name: "使用排期", exact: true }).click();
+  const memberGroup = livePage.getByLabel("排期组筛选", { exact: true });
+  await memberGroup.selectOption(groupId);
+  await expect(currentUse.getByText("4 / 8", { exact: true })).toBeVisible();
+  await memberGroup.selectOption(state.groups[1].id);
+  await expect(currentUse.getByText("本组当前没有生效的日常排期。")).toBeVisible();
+  delayGroup = groupId;
+  await memberGroup.selectOption(groupId);
+  await expect.poll(() => typeof completeDelayedResponse).toBe("function");
+  await expect(currentUse.getByText("4 / 8", { exact: true })).toBeVisible({ timeout: 1000 });
+  await expect(currentUse.getByText("正在读取机器状态…")).toHaveCount(0);
+  delayGroup = "";
+  completeDelayedResponse?.();
   assert.deepEqual(liveErrors, []);
   await liveContext.close();
-  console.log("Multi-node handoff and partial telemetry agree across current usage, timeline and cabinet views.");
+  console.log("Multi-node handoff, partial telemetry, signed-in access and cached group switching passed.");
 } finally {
   await browser.close();
 }

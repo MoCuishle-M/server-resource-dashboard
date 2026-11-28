@@ -2,12 +2,15 @@ import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { DomainError, mutate, serializePublic } from "./domain";
 import { enrollAdmin } from "./admin-enrollment";
-import { loadState, saveState } from "./repository";
+import { loadCurrentUseState, loadState, saveState } from "./repository";
 import type { Action, Actor } from "./types";
-export async function context() {
+export async function context(currentUseSince?: string) {
   if (!env.DB) throw new DomainError(503, "数据库尚未连接，请联系管理员");
-  const s = await loadState(env.DB);
   const u = await getChatGPTUser();
+  if (currentUseSince && !u) throw new DomainError(401, "请登录后查看当前用机");
+  const s = currentUseSince && u
+    ? await loadCurrentUseState(env.DB, u.userId, u.email.trim().toLowerCase(), currentUseSince)
+    : await loadState(env.DB);
   const actor: Actor = {
     userId: u?.userId ?? "",
     email: u?.email ?? "",
@@ -20,6 +23,7 @@ export async function context() {
     .split(",").map(x => x.trim().toLowerCase()).filter(Boolean);
   const enrolled = enrollAdmin(s, u, configured, new Date().toISOString());
   if (enrolled !== s) {
+    if (currentUseSince) return context();
     await saveState(env.DB, s, enrolled);
     Object.assign(s, enrolled);
   }

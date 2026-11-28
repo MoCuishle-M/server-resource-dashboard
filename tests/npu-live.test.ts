@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readdir, readFile } from "node:fs/promises";
+import { Miniflare } from "miniflare";
 import { emptyState, serializePublic } from "../lib/domain";
 import { liveHistory, liveView, readLive } from "../lib/npu-live";
+import { loadCurrentUseState } from "../lib/repository";
 import { layoutGroupAvailability } from "../lib/schedule";
 import type { Actor, Booking, Resource, UsageRequest } from "../lib/types";
 
@@ -51,12 +54,15 @@ test("the visible timeline uses the same handoff even when the multi-node source
   assert.equal(liveView(mixed, actor, "g1", now, 1, [], []).machines[0].until, Date.parse(timeline[0].endAt));
 });
 
-test("anonymous, unassigned and cross-group requests cannot reach telemetry storage", async () =>{
+test("signed-in users can select any group and anonymous users cannot read live telemetry", async () =>{
   const db = {prepare(){throw Error("telemetry must not be queried");}} as unknown as D1Database;
   const url = new URL("https://example.test/api/npu-live?group=g2");
   await assert.rejects(readLive(db,state,{...actor,userId:"",role:"visitor"},url,now),{status:401});
-  await assert.rejects(readLive(db,state,{...actor,role:"member",groupId:""},url,now),{status:403});
-  await assert.rejects(readLive(db,state,actor,url,now),{status:403});
+  const member: Actor = {...actor,role:"member",groupId:""};
+  assert.deepEqual(liveView(state, member, "g2", now, 1, [], []).machines.map(row => row.id), ["r2"]);
+  assert.deepEqual(liveView(state, actor, "g2", now, 1, [], []).machines.map(row => row.id), ["r2"]);
+  assert.deepEqual(liveView(state, member, "g1", now, 1, [], []).machines.map(row => row.id), ["r1"]);
+  await assert.rejects(readLive(db,state,member,new URL("https://example.test/api/npu-live"),now),{status:400});
   url.searchParams.set("group","all");
   await assert.rejects(readLive(db,state,actor,url,now),{status:403});
 });
@@ -86,7 +92,16 @@ test("history covers only the group's ordinary period and leaves missing observa
   }}],[{start:at(1196),end:at(1200)}],now,1);
   assert.equal(result.values.length,12);
   assert(result.values.slice(0,-1).every(x=>x===null));
+  assert(result.gaps.slice(0,-1).every(x=>x==="outside"));
+  assert.equal(result.gaps.at(-1),null);
   assert.equal(result.mean,100/3);
+});
+
+test("history distinguishes no assignment, overdue missing data and a pending minute", () => {
+  const result = liveHistory([], [{start:at(1180),end:at(1185)},{start:at(1199),end:at(1200)}],now,1);
+  assert.equal(result.gaps[7],"outside");
+  assert.equal(result.gaps[8],"missing");
+  assert.equal(result.gaps[11],"pending");
 });
 
 test("expired idle snapshots are not offered as available", () =>{
@@ -94,4 +109,27 @@ test("expired idle snapshots are not offered as available", () =>{
   const snapshots=(age:number)=>[{resourceId:"r1",expected:8,snapshot:{at:at(1200-age),cards}}];
   assert.equal(liveView(state,actor,"g1",now,1,[],snapshots(2)).machines[0].idle,8);
   assert.equal(liveView(state,actor,"g1",now,1,[],snapshots(4)).machines[0].idle,null);
+});
+
+test("live D1 query preserves inherited task sections while omitting unrelated historical bookings", async () => {
+  const mf = new Miniflare({ modules: true, script: "export default {fetch: () => new Response('ok')}", d1Databases: ["DB"] });
+  try {
+    const db = await mf.getD1Database("DB") as unknown as D1Database;
+    const files = (await readdir("drizzle")).filter(name => name.endsWith(".sql")).sort();
+    const sql = await Promise.all(files.map(name => readFile(`drizzle/${name}`, "utf8")));
+    await db.batch(sql.flatMap(content => content.split("--> statement-breakpoint")).filter(x => x.trim()).map(x => db.prepare(x)));
+    const olderBooking = booking("previous", "r1", 600, 730);
+    await db.batch([
+      ...state.resources.map(row => db.prepare("INSERT INTO resources(id,payload) VALUES(?,?)").bind(row.id, JSON.stringify(row))),
+      ...groups.map(row => db.prepare("INSERT INTO groups(id,payload) VALUES(?,?)").bind(row.id, JSON.stringify(row))),
+      ...state.requests.map(row => db.prepare("INSERT INTO requests(id,payload) VALUES(?,?)").bind(row.id, JSON.stringify(row))),
+      ...[...state.bookings, olderBooking].map(row => db.prepare("INSERT INTO bookings(id,payload) VALUES(?,?)").bind(row.id, JSON.stringify(row))),
+    ]);
+    const liveState = await loadCurrentUseState(db, actor.userId, "example@test", iso(900));
+    assert(!liveState.bookings.some(row => row.id === olderBooking.id));
+    const response = await readLive(db, liveState, actor, new URL("https://example.test/api/npu-live?group=g1"), now);
+    assert.deepEqual(response.machines.map(row => [row.id, row.until]), [["r1", at(1260)]]);
+  } finally {
+    await mf.dispose();
+  }
 });

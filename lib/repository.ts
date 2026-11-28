@@ -40,6 +40,29 @@ export async function loadState(db: D1Database): Promise<State> {
   s.audits.sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id));
   return s;
 }
+
+export async function loadCurrentUseState(db: D1Database, userId: string, email: string, since: string): Promise<State> {
+  const [resources, groups, accounts, invitations, requests, bookings] = await db.batch<{ payload: string }>([
+    db.prepare("SELECT payload FROM resources"),
+    db.prepare("SELECT payload FROM groups"),
+    db.prepare("SELECT payload FROM accounts WHERE json_extract(payload, '$.userId') = ?").bind(userId),
+    db.prepare("SELECT payload FROM admin_invitations WHERE json_extract(payload, '$.status') = 'pending' AND json_extract(payload, '$.email') = ?")
+      .bind(email),
+    db.prepare(`SELECT json_object('id', id,
+      'weeklySection', json_extract(payload, '$.weeklySection'),
+      'sourceRequestId', json_extract(payload, '$.sourceRequestId')) AS payload FROM requests`),
+    db.prepare("SELECT payload FROM bookings WHERE julianday(json_extract(payload, '$.endAt')) > julianday(?)").bind(since),
+  ]);
+  const state = emptyState();
+  state.resources = resources.results.map(row => JSON.parse(row.payload));
+  if (groups.results.length) state.groups = groups.results.map(row => JSON.parse(row.payload));
+  if (!state.groups.some(group => group.id === PLATFORM_GROUP_ID)) state.groups.push(platformGroup());
+  state.accounts = accounts.results.map(row => JSON.parse(row.payload));
+  state.invitations = invitations.results.map(row => JSON.parse(row.payload));
+  state.requests = requests.results.map(row => JSON.parse(row.payload));
+  state.bookings = bookings.results.map(row => JSON.parse(row.payload));
+  return state;
+}
 export async function saveState(db: D1Database, before: State, after: State) {
   const guard = crypto.randomUUID();
   const statements = [
