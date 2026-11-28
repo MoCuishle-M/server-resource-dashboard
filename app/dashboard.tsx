@@ -62,7 +62,7 @@ import {
 import { canViewNpuUsage, resourceStatusLabels } from "@/lib/resource-policy";
 import { demoState, demoAdmin, demoContact } from "@/lib/demo";
 import ScheduleTimeline from "./schedule-timeline";
-import NpuLiveOverview from "./npu-live-overview";
+import NpuLiveOverview, { NpuFleetOverview } from "./npu-live-overview";
 import NpuUsage from "./npu-usage";
 import ResourceTimeBlockForm, { ResourceTimeBlockList } from "./resource-time-block-form";
 import { currentTimeBlock, timeBlockTitle } from "@/lib/resource-time-blocks";
@@ -373,7 +373,7 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
   async function refresh(initial = false) {
     try {
       if (demo) {
-        if (initial) setS(demoState());
+        if (initial) setS(demoState(new URLSearchParams(window.location.search).get("fleet") === "large"));
       } else {
         const r = await fetch("/api/state", { cache: "no-store" });
         const data = (await r.json()) as PublicState & { error?: string };
@@ -1210,6 +1210,10 @@ export default function Dashboard({ demo = false }: { demo?: boolean }) {
                         <strong>{resources.filter(r => r.zone === zone && r.family === family).length}<small>台</small></strong>
                       </article>)}
                     </section>
+                    <NpuFleetOverview state={s} demo={demo} onDetail={id=>{
+                      const resource=resources.find(r=>r.id===id);
+                      if(resource)setDetail(resource);
+                    }}/>
                     <section className="panel team-occupancy-panel">
                       <div className="section-heading">
                         <div>

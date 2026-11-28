@@ -1,15 +1,23 @@
 import { DomainError } from "./domain";
 import { layoutGroupAvailability, shiftDate } from "./schedule";
 import { minuteMs, type NpuCard, type NpuDay, type NpuLatest } from "./npu-usage";
-import type { Actor, Booking, State } from "./types";
+import type { Actor, Booking, Resource, State } from "./types";
 
 const date = (at: number) => new Date(at + 8 * 60 * minuteMs).toISOString().slice(0, 10);
 const dayStart = (day: string) => Date.parse(`${day}T00:00:00+08:00`);
-const rackPattern = /^(?:计算柜|机柜|柜|A|B)?\s*0*(1|2|9|11|12)$/i;
+const rackPattern = /^(?:计算柜|机柜|柜|A|B)?\s*0*([1-9]\d?)$/i;
+const monitoredRacks = new Set([1, 2, 9, 11, 12]);
 const busy = new Set(["active", "occupied_low", "occupied_unknown"]);
 const at = (value: string) => Date.parse(value);
 const iso = (value: number) => new Date(value).toISOString();
 export const allLiveGroups = "all";
+
+export function liveLocation(resource: Pick<Resource, "name" | "rack" | "zone">, monitoredOnly = true) {
+  const rack = Number(resource.rack?.trim().match(rackPattern)?.[1]);
+  if (!rack || resource.zone !== "blue" || monitoredOnly && !monitoredRacks.has(rack)) return null;
+  const slot = Number(resource.name.match(/(?:CPU|节点)\s*[-_]?\s*(\d+)\s*$/i)?.[1]) || null;
+  return {rack, slot};
+}
 
 export function canViewNpuLive(actor: Actor) {
   return !!actor.userId && (actor.role === "admin" || actor.role !== "visitor" && !!actor.groupId);
@@ -69,8 +77,8 @@ function liveCandidates(state: Pick<State, "resources" | "bookings" | "requests"
     byResource.set(booking.resourceId, rows);
   }
   return state.resources.flatMap(resource => {
-    const match = resource.rack?.trim().match(rackPattern);
-    if (!match || resource.zone !== "blue" || resource.deleted || resource.hidden && actor.role !== "admin") return [];
+    const location = liveLocation(resource);
+    if (!location || resource.deleted || resource.hidden && actor.role !== "admin") return [];
     const bookings = byResource.get(resource.id) ?? [];
     const ordinary = bookings.filter(b => !isDedicated(b));
     const currentGroups = new Set(ordinary.filter(b => at(b.startAt) <= now && now < at(b.endAt)).map(b => b.groupId));
@@ -82,8 +90,7 @@ function liveCandidates(state: Pick<State, "resources" | "bookings" | "requests"
       return active ? [{name: group.name, until: active.end, windows}] : [];
     });
     if (!allocations.length) return [];
-    const slot = Number(resource.name.match(/(?:CPU|节点)\s*[-_]?\s*(\d+)\s*$/i)?.[1]) || null;
-    return [{resource, rack: Number(match[1]), slot, until: Math.min(...allocations.map(a => a.until)),
+    return [{resource, ...location, until: Math.min(...allocations.map(a => a.until)),
       groupNames: allocations.map(a => a.name), shared: currentGroups.size > 1,
       windows: unionWindows(allocations.flatMap(a => a.windows))}];
   }).sort((a, b) => a.rack - b.rack || (a.slot ?? Infinity) - (b.slot ?? Infinity) ||
