@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { chinaDate } from "@/lib/domain";
-import { canViewNpuLive, liveLocation, liveView, readLiveCards, type CardState, type LiveView } from "@/lib/npu-live";
+import { liveLocation, liveView, readLiveCards, type CardState, type LiveView } from "@/lib/npu-live";
 import { minuteMs, type NpuAnalysis, type NpuDay, type NpuLatest } from "@/lib/npu-usage";
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import type { PublicState, Resource } from "@/lib/types";
@@ -120,10 +120,9 @@ export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
   const [results, setResults] = useState(() => new Map<string, CachedLiveView>());
   const [, updateClock] = useState(0);
   const [failure, setFailure] = useState<{group: string; message: string} | null>(null);
-  const allowed = canViewNpuLive(state.actor);
   const demoState = demo ? state : null;
   useEffect(()=>{
-    if (!allowed || !groupId) return;
+    if (!groupId) return;
     const controller=new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     async function refresh(){
@@ -160,8 +159,8 @@ export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
     }
     void refresh();
     return()=>{controller.abort();clearTimeout(timer);};
-  },[allowed, groupId, demoState, state.revision]);
-  const cached = allowed ? results.get(groupId) : undefined;
+  },[groupId, demoState, state.revision]);
+  const cached = results.get(groupId);
   const cacheAge = cached ? performance.now() - cached.receivedAt : 0;
   const view = cached && cacheAge < minuteMs ? cached.view : null;
   const now = cached ? cached.serverTimeAtReceipt + cacheAge : 0;
@@ -179,9 +178,7 @@ export default function NpuLiveOverview({state, demo, groupId, onDetail}: {
     <div className="npu-live-header">
       <h2 id="npu-live-title">当前用机</h2>
     </div>
-    {!allowed ? <p className="npu-live-prompt">{demo ? "登录后可查看所选使用组的机器状态。" :
-      <><a href="/signin-with-chatgpt?return_to=/" target="_top">登录</a>后可查看所选使用组的机器状态。</>}</p> :
-    !groupId ? <p className="npu-live-prompt">选择使用组后查看当前用机。</p> : <div>
+    {!groupId ? <p className="npu-live-prompt">选择使用组后查看当前用机。</p> : <div>
       {error && <p role="alert">{error}</p>}
       {!error&&!view&&<p className="npu-live-prompt" role="status">正在读取机器状态…</p>}
       {view&&<>

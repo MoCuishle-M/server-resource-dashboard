@@ -7,9 +7,8 @@ import type { Action, Actor } from "./types";
 export async function context(currentUseSince?: string) {
   if (!env.DB) throw new DomainError(503, "数据库尚未连接，请联系管理员");
   const u = await getChatGPTUser();
-  if (currentUseSince && !u) throw new DomainError(401, "请登录后查看当前用机");
-  const s = currentUseSince && u
-    ? await loadCurrentUseState(env.DB, u.userId, u.email.trim().toLowerCase(), currentUseSince)
+  const s = currentUseSince
+    ? await loadCurrentUseState(env.DB, u?.userId ?? null, u?.email.trim().toLowerCase() ?? null, currentUseSince)
     : await loadState(env.DB);
   const actor: Actor = {
     userId: u?.userId ?? "",
@@ -27,7 +26,7 @@ export async function context(currentUseSince?: string) {
     await saveState(env.DB, s, enrolled);
     Object.assign(s, enrolled);
   }
-  const existing = s.accounts.find(a => a.userId === actor.userId && a.status === "approved");
+  const existing = u && s.accounts.find(a => a.userId === actor.userId && a.status === "approved");
   if (existing) {
     actor.role = existing.role;
     actor.groupId = existing.groupId;

@@ -41,7 +41,7 @@ export async function loadState(db: D1Database): Promise<State> {
   return s;
 }
 
-export async function loadCurrentUseState(db: D1Database, userId: string, email: string, since: string): Promise<State> {
+export async function loadCurrentUseState(db: D1Database, userId: string | null, email: string | null, since: string): Promise<State> {
   const [resources, groups, accounts, invitations, requests, bookings] = await db.batch<{ payload: string }>([
     db.prepare("SELECT payload FROM resources"),
     db.prepare("SELECT payload FROM groups"),

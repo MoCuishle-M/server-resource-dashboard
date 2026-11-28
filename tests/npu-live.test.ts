@@ -12,6 +12,7 @@ const base = Date.parse("2026-11-26T00:00:00+08:00");
 const at = (minute: number) => base + minute*60_000;
 const iso = (minute: number) => new Date(at(minute)).toISOString();
 const actor: Actor = {userId:"u", displayName:"测试", email:"", role:"contact", groupId:"g1", employeeId:""};
+const visitor: Actor = {...actor,userId:"",role:"visitor",groupId:""};
 const makeResource = (id: string, hidden = false): Resource => ({
   id, ip: `192.0.2.${id.slice(1)}`, name: `柜09-CPU${id.slice(1)}`, type:"NPU", zone:"blue", rack:"计算柜09",
   accessMode:"bare", sharingMode:"exclusive", location:"", note:"", hidden, status:"available",
@@ -54,16 +55,18 @@ test("the visible timeline uses the same handoff even when the multi-node source
   assert.equal(liveView(mixed, actor, "g1", now, 1, [], []).machines[0].until, Date.parse(timeline[0].endAt));
 });
 
-test("signed-in users can select any group and anonymous users cannot read live telemetry", async () =>{
+test("visitors and signed-in users can read the selected group without exposing hidden servers", async () =>{
   const db = {prepare(){throw Error("telemetry must not be queried");}} as unknown as D1Database;
-  const url = new URL("https://example.test/api/npu-live?group=g2");
-  await assert.rejects(readLive(db,state,{...actor,userId:"",role:"visitor"},url,now),{status:401});
   const member: Actor = {...actor,role:"member",groupId:""};
+  assert.deepEqual(liveView(state, visitor, "g1", now, 1, [], []).machines.map(row => row.id), ["r1"]);
+  assert.deepEqual(liveView(state, visitor, "g2", now, 1, [], []).machines.map(row => row.id), ["r2"]);
   assert.deepEqual(liveView(state, member, "g2", now, 1, [], []).machines.map(row => row.id), ["r2"]);
   assert.deepEqual(liveView(state, actor, "g2", now, 1, [], []).machines.map(row => row.id), ["r2"]);
   assert.deepEqual(liveView(state, member, "g1", now, 1, [], []).machines.map(row => row.id), ["r1"]);
+  await assert.rejects(readLive(db,state,visitor,new URL("https://example.test/api/npu-live"),now),{status:400});
   await assert.rejects(readLive(db,state,member,new URL("https://example.test/api/npu-live"),now),{status:400});
-  url.searchParams.set("group","all");
+  const url = new URL("https://example.test/api/npu-live?group=all");
+  await assert.rejects(readLive(db,state,visitor,url,now),{status:403});
   await assert.rejects(readLive(db,state,actor,url,now),{status:403});
 });
 
@@ -125,9 +128,9 @@ test("live D1 query preserves inherited task sections while omitting unrelated h
       ...state.requests.map(row => db.prepare("INSERT INTO requests(id,payload) VALUES(?,?)").bind(row.id, JSON.stringify(row))),
       ...[...state.bookings, olderBooking].map(row => db.prepare("INSERT INTO bookings(id,payload) VALUES(?,?)").bind(row.id, JSON.stringify(row))),
     ]);
-    const liveState = await loadCurrentUseState(db, actor.userId, "example@test", iso(900));
+    const liveState = await loadCurrentUseState(db, null, null, iso(900));
     assert(!liveState.bookings.some(row => row.id === olderBooking.id));
-    const response = await readLive(db, liveState, actor, new URL("https://example.test/api/npu-live?group=g1"), now);
+    const response = await readLive(db, liveState, visitor, new URL("https://example.test/api/npu-live?group=g1"), now);
     assert.deepEqual(response.machines.map(row => [row.id, row.until]), [["r1", at(1260)]]);
   } finally {
     await mf.dispose();

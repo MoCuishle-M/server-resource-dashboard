@@ -19,20 +19,11 @@ export function liveLocation(resource: Pick<Resource, "name" | "rack" | "zone">,
   return {rack, slot};
 }
 
-export function canViewNpuLive(actor: Actor) {
-  return !!actor.userId && actor.role !== "visitor";
-}
-
-export function liveGroups(state: Pick<State, "groups">, actor: Actor) {
-  if (!canViewNpuLive(actor)) throw new DomainError(actor.userId ? 403 : 401, "请登录后查看当前用机");
-  return state.groups.map(({id, name}) => ({id, name}));
-}
-
 type Window = { start: number; end: number };
-type LiveGroup = ReturnType<typeof liveGroups>[number];
+type LiveGroup = Pick<State["groups"][number], "id" | "name">;
 
 function liveScope(state: Pick<State, "groups">, actor: Actor, groupId: string) {
-  const groups = liveGroups(state, actor);
+  const groups = state.groups.map(({id, name}) => ({id, name}));
   const group = groupId || (actor.role === "admin" ? allLiveGroups : actor.groupId);
   if (group === allLiveGroups) {
     if (actor.role !== "admin") throw new DomainError(403, "请选择单个使用组");
