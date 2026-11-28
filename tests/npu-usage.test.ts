@@ -168,7 +168,8 @@ test("D1 ingest authenticates, merges repeat uploads and keeps the newest snapsh
     await db.batch(sql.flatMap(text => text.split("--> statement-breakpoint")).filter(x => x.trim()).map(x => db.prepare(x)));
     await db.prepare("INSERT INTO resources (id, payload) VALUES (?, ?)").bind(resource.id, JSON.stringify(resource)).run();
     const sample = { day, ip: resource.ip, expected: 8, points: [[541, 8, 4, 8, 240]],
-      snapshot: { at: Date.parse(at(541)), cards: [{ key: "0-0", state: "active", util: 30, hbm: 40 }] } };
+      snapshot: { at: Date.parse(at(541)), cards: Array.from({ length: 4 }, (_, i) =>
+        ({ key: `${i}-0`, state: "idle", util: 0, hbm: 0 })) } };
     await saveUsage(db, sample, now);
     await saveUsage(db, sample, now);
     await saveUsage(db, { ...sample, points: [[540, 8, 0, 8, 0]], snapshot: { ...sample.snapshot, at: Date.parse(at(540)) } }, now);
@@ -185,6 +186,8 @@ test("D1 ingest authenticates, merges repeat uploads and keeps the newest snapsh
     assert.equal(result.groups[0].observed, 16);
     assert.equal(result.groups[0].occupied, 4);
     assert.equal(result.machines.find(row => row.id === resource.id)?.snapshot?.at, sample.snapshot.at);
+    assert.equal(result.machines.find(row => row.id === resource.id)?.snapshot?.expected, 8);
+    assert.equal(result.machines.find(row => row.id === resource.id)?.snapshot?.cards.length, 4);
     assert.equal(result.machines.find(row => row.id === hidden.id)?.snapshot, null);
     assert.equal(result.machines.length, 2);
     assert.equal(result.fleet.observed, 24);

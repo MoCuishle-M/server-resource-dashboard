@@ -22,7 +22,7 @@ export const demoContact: Actor = {
   groupId: "g1",
   employeeId: "DEMO002",
 };
-export function demoState(): PublicState {
+export function demoState(largeFleet = false): PublicState {
   const now = new Date();
   const s = emptyState();
   const at = now.toISOString();
@@ -67,6 +67,17 @@ export function demoState(): PublicState {
       createdAt: at,
       updatedAt: at,
     });
+  if (largeFleet) {
+    const sample = s.resources[12];
+    let address = 40;
+    for (const rack of ["01", "02", "03", "09", "11", "12"]) {
+      for (let slot = rack === "02" ? 5 : 1; slot <= 8; slot++) {
+        const status = slot === 8 ? "maintenance" : "available";
+        s.resources.push({...sample, id: `demo-fleet-${rack}-${slot}`, ip: `192.0.2.${address++}`,
+          name: `Atlas-950 · 柜 ${rack} · 节点 ${slot}`, rack, location: `北京 · ${rack} 号机柜`, status});
+      }
+    }
+  }
   const tasks = [
     "Qwen3 预训练 · 长上下文实验",
     "多模态对齐 · 第二轮训练",

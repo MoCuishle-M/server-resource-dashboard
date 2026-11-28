@@ -1,12 +1,12 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { CalendarClock, ChevronLeft, ChevronRight, Plus, Search, Server, ListFilter } from "lucide-react";
 import { chinaDate, resourceSharingMode } from "@/lib/domain";
 import { resourceStatusLabels } from "@/lib/resource-policy";
 import { resourceSearch } from "@/lib/resource-search";
 import ResourceTypeFilter from "./resource-type-filter";
 import ListPagination, { useListPagination } from "./list-pagination";
-import { calendarRange, customRange, layoutBookings, layoutGroupAvailability, layoutTimeBlocks, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
+import { calendarRange, customRange, isDedicatedBooking, layoutBookings, layoutGroupAvailability, layoutTimeBlocks, shiftDate, timelineTicks, type TimelineRange } from "@/lib/schedule";
 import type { Booking, Group, Resource, ResourceTimeBlock, WeeklyPlan } from "@/lib/types";
 import { timeBlockTitle } from "@/lib/resource-time-blocks";
 import { scheduleNoteDisplay, scheduleNotes } from "@/lib/schedule-notes";
@@ -44,13 +44,14 @@ function resourceGroupLabel(r: Resource) {
   return `${r.family || "未登记类型"} ${r.family === "A5" && rack ? `${zone}${cabinet ? cabinet + "柜" : " " + rack}` : zone}`;
 }
 
-export default function ScheduleTimeline({ resources, bookings, groups, rememberGroup = false, weeklyPlans = [], now, onDetail, onRequest, onPriority, onTimeBlock }: {
+export default function ScheduleTimeline({ resources, bookings, groups, rememberGroup = false, weeklyPlans = [], now, renderCurrentUse, onDetail, onRequest, onPriority, onTimeBlock }: {
   resources: Resource[];
   bookings: Booking[];
   groups: Group[];
   rememberGroup?: boolean;
   weeklyPlans?: WeeklyPlan[];
   now: string;
+  renderCurrentUse: (groupId: string) => ReactNode;
   onDetail: (resource: Resource) => void;
   onRequest?: (ids: string[], range: TimelineRange) => void;
   onPriority?: (booking: Booking) => void;
@@ -104,7 +105,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
       const { bars } = layoutBookings(bookings.filter(b => b.resourceId === resource.id && (!group || b.groupId === group)), range);
       const regular = new Map<string, Booking[]>();
       for (const { booking } of bars) {
-        if (booking.priority !== "normal") continue;
+        if (isDedicatedBooking(booking)) continue;
         const entries = regular.get(booking.groupId);
         if (entries) entries.push(booking);
         else regular.set(booking.groupId, [booking]);
@@ -114,7 +115,7 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
         notes: scheduleNoteDisplay(scheduleNotes(weeklyPlans, resource.id, range)),
         blocks: layoutTimeBlocks(resource.timeBlocks ?? [], range),
         availability: group ? layoutGroupAvailability(resource, bookings, group, range) : [],
-        elevated: bars.filter(({ booking }) => booking.priority !== "normal"),
+        elevated: bars.filter(({ booking }) => isDedicatedBooking(booking)),
       };
     })
     .filter(row => !group || row.regular.size > 0 || row.elevated.length > 0);
@@ -132,11 +133,11 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
     }
     setError(""); setMode(next);
   }
-  return <section className="panel schedule-panel">
+  const timeline = <section className="panel schedule-panel">
     <div className="section-heading schedule-heading">
       <div>
         <h2>资源时间线</h2>
-        <p>{group ? "已选择使用组：绿色表示该组普通时段可用，灰色表示不可用，红色继续展示该组多机任务。其他组的多机任务占用和停用时段也会计入不可用区间。" : "「使用组」显示所选日期内的常态安排。右侧显示高优、紧急排期和时段标记，同级重叠时分行。未被临时占用或停用的时段按常态安排使用。"}点击 IP 或组名可查看详情。</p>
+        <p>{group ? "已选择使用组：绿色表示该组普通时段可用，灰色表示不可用。其他组的多机任务占用和停用时段也会计入不可用区间。" : "「使用组」显示所选日期内的常态安排。右侧显示多机、高优、紧急排期和时段标记，同级重叠时分行。未被临时占用或停用的时段按常态安排使用。"}点击 IP 或组名可查看详情。</p>
       </div>
       <div className="schedule-modes" aria-label="排期查看方式">
         {([ ["week", "一周"], ["day", "单日"], ["range", "自定义范围"] ] as const).map(([key, label]) =>
@@ -162,12 +163,6 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
       <p className="schedule-range-label" data-start={range.startAt} data-end={range.endAt}>{fullTime(range.startAt)} — {fullTime(range.endAt)} · 北京时间（结束时刻不含在范围内）</p>
     </div>
     <div className="filters schedule-filters">
-      <label className={`schedule-group-filter ${group ? "is-filtered" : ""}`}>
-        <span><ListFilter size={16} />使用组</span>
-        <select aria-label="排期组筛选" value={group} onChange={e => setGroup(e.target.value)}>
-          <option value="">全部团队</option>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-        </select>
-      </label>
       <select aria-label="排期型号筛选" value={family} onChange={e => setFamily(e.target.value)}>
         <option value="">全部类型</option><option value="A3">A3</option><option value="A5">A5</option><option value="unset">未登记类型</option>
       </select>
@@ -233,7 +228,8 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
               return <button key={block.id} className={`booking-chip timeline-booking timeline-time-block time-block-${block.kind}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane} * var(--timeline-lane-height) + 6px)` }} aria-label={label} title={`${label}${onTimeBlock && block.endAt > now ? "\n点击编辑时段标记" : ""}`} onClick={() => onTimeBlock && block.endAt > now ? onTimeBlock(r, undefined, block) : onDetail(r)}><span className="timeline-summary">{continuesBefore ? "‹ " : ""}<strong>{timeBlockTitle(block)}</strong>{continuesAfter ? " ›" : ""}</span></button>;
             })}
             {elevated.map(({ booking: b, lane, left, width, continuesBefore, continuesAfter }) => {
-              const { label, status, isBlocked } = bookingText(b, r);
+              const { label: bookingLabel, status, isBlocked } = bookingText(b, r);
+              const label = b.priority === "normal" ? `多机任务 · ${bookingLabel}` : bookingLabel;
               const editable = !!onPriority && b.status === "scheduled" && b.endAt > now;
               return <button key={b.id} className={`booking-chip timeline-booking priority-${b.priority}`} style={{ left: `${left}%`, width: `${width}%`, top: `calc(${lane} * var(--timeline-lane-height) + 6px)` }} title={`${label}${editable ? "\n点击调整优先级" : ""}`} aria-label={label} onClick={() => editable ? onPriority!(b) : onDetail(r)} data-booking-id={b.id}>
                 <span className="timeline-summary">{continuesBefore ? "‹ " : ""}<strong>{groupName(b.groupId)}</strong><span> · {b.purpose}</span>{continuesAfter ? " ›" : ""}</span>
@@ -248,6 +244,18 @@ export default function ScheduleTimeline({ resources, bookings, groups, remember
       {!resourceRows.length && <div className="empty"><Server size={28} /><h3>{resources.length ? "没有符合条件的排期资源" : "添加资源后即可查看排期"}</h3></div>}
     </div>
     <ListPagination pagination={pagination} label="资源时间线" bottom />
-    <div className="schedule-legend priority-legend">{group && <><span><i className="priority-swatch ordinary-available" />普通时段可用</span><span><i className="priority-swatch ordinary-unavailable" />普通时段不可用</span></>}<span><i className="priority-swatch high" />{group ? "多机任务 · 高优" : "高优"}</span><span><i className="priority-swatch urgent" />{group ? "多机任务 · 紧急" : "紧急"}</span><span><i className="priority-swatch time-block-emergency" />紧急占用标记</span><span><i className="priority-swatch time-block-upgrade" />正在升级</span><span>同级共用仅适用于共享服务器</span></div>
+    <div className="schedule-legend priority-legend">{group && <><span><i className="priority-swatch ordinary-available" />普通时段可用</span><span><i className="priority-swatch ordinary-unavailable" />普通时段不可用</span></>}{resourceRows.some(row => row.elevated.some(({ booking }) => booking.priority === "normal")) && <span><i className="priority-swatch normal" />多机任务 · 普通</span>}<span><i className="priority-swatch high" />{group ? "多机任务 · 高优" : "高优"}</span><span><i className="priority-swatch urgent" />{group ? "多机任务 · 紧急" : "紧急"}</span><span><i className="priority-swatch time-block-emergency" />紧急占用标记</span><span><i className="priority-swatch time-block-upgrade" />正在升级</span><span>同级共用仅适用于共享服务器</span></div>
   </section>;
+  return <>
+    <div className="filters schedule-page-filters">
+      <label className={`schedule-group-filter ${group ? "is-filtered" : ""}`}>
+        <span><ListFilter size={16} />使用组</span>
+        <select aria-label="排期组筛选" value={group} onChange={e => setGroup(e.target.value)}>
+          <option value="">全部团队</option>{groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+        </select>
+      </label>
+    </div>
+    {renderCurrentUse(group)}
+    {timeline}
+  </>;
 }
